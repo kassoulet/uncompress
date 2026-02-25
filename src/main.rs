@@ -1,18 +1,60 @@
 use clap::Parser;
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use png::{Encoder, FilterType};
+use png::{Encoder, Filter};
 use std::fs::{self, File};
-use std::io::{Read, Write};
+use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 use zip::write::FileOptions;
 use zip::ZipWriter;
 
+/// Magic bytes for ZIP files (PK\x03\x04)
+const ZIP_MAGIC: &[u8] = &[0x50, 0x4B, 0x03, 0x04];
+/// Magic bytes for PNG files (\x89PNG\r\n\x1a\n)
+const PNG_MAGIC: &[u8] = &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+/// Magic bytes for GZ files (\x1f\x8b)
+const GZ_MAGIC: &[u8] = &[0x1F, 0x8B];
+
+/// File types detected by magic bytes
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FileType {
+    Zip,
+    Gz,
+    Png,
+}
+
+/// Detect file type by reading magic bytes from the beginning of the file
+fn detect_file_type(path: &Path) -> Option<FileType> {
+    let mut file = File::open(path).ok()?;
+    let mut buffer = [0u8; 8];
+    
+    // Read enough bytes to check all magic signatures
+    let bytes_read = file.read(&mut buffer).ok()?;
+    
+    // Check for PNG (8 bytes)
+    if bytes_read >= PNG_MAGIC.len() && buffer[..PNG_MAGIC.len()] == *PNG_MAGIC {
+        return Some(FileType::Png);
+    }
+    
+    // Check for ZIP (4 bytes)
+    if bytes_read >= ZIP_MAGIC.len() && buffer[..ZIP_MAGIC.len()] == *ZIP_MAGIC {
+        return Some(FileType::Zip);
+    }
+    
+    // Check for GZ (2 bytes)
+    if bytes_read >= GZ_MAGIC.len() && buffer[..GZ_MAGIC.len()] == *GZ_MAGIC {
+        return Some(FileType::Gz);
+    }
+    
+    None
+}
+
 /// Decompress files for better git storage
-/// 
+///
 /// Handles ZIP-based files (docx, xlsx, ipynb, etc.), GZ files, and PNG images.
 /// For PNG, applies Paeth filter with zero compression.
+/// File type detection is based on magic bytes, not file extensions.
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
@@ -55,14 +97,14 @@ fn main() {
 }
 
 fn process_file(path: &Path, output_dir: Option<&PathBuf>, verbose: bool) {
-    let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    // Detect file type by magic bytes
+    let file_type = detect_file_type(path);
 
-    let result = match extension.to_lowercase().as_str() {
-        "png" => process_png(path, output_dir, verbose),
-        "gz" => process_gz(path, output_dir, verbose),
-        "docx" | "xlsx" | "pptx" | "xlsm" | "pptm" | "dotx" | "dotm" | "xltm" | "potx" | "potm"
-        | "ipynb" | "zip" => process_zip_based(path, output_dir, verbose),
-        _ => {
+    let result = match file_type {
+        Some(FileType::Png) => process_png(path, output_dir, verbose),
+        Some(FileType::Gz) => process_gz(path, output_dir, verbose),
+        Some(FileType::Zip) => process_zip_based(path, output_dir, verbose),
+        None => {
             if verbose {
                 println!("Skipping unsupported file type: {}", path.display());
             }
@@ -84,7 +126,11 @@ fn process_file(path: &Path, output_dir: Option<&PathBuf>, verbose: bool) {
 
 /// Process ZIP-based files (docx, xlsx, ipynb, etc.)
 /// Recompress with STORED method (no compression)
-fn process_zip_based(path: &Path, output_dir: Option<&PathBuf>, _verbose: bool) -> Result<PathBuf, Box<dyn std::error::Error>> {
+fn process_zip_based(
+    path: &Path,
+    output_dir: Option<&PathBuf>,
+    _verbose: bool,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let output_path = determine_output_path(path, output_dir)?;
 
     let input_file = File::open(path)?;
@@ -94,7 +140,7 @@ fn process_zip_based(path: &Path, output_dir: Option<&PathBuf>, _verbose: bool) 
     let mut zip_writer = ZipWriter::new(output_file);
 
     // Use STORED method (no compression) for all entries
-    let options = FileOptions::default()
+    let options: FileOptions<'_, ()> = FileOptions::default()
         .compression_method(zip::CompressionMethod::Stored);
 
     for i in 0..archive.len() {
@@ -120,7 +166,11 @@ fn process_zip_based(path: &Path, output_dir: Option<&PathBuf>, _verbose: bool) 
 
 /// Process GZ files
 /// Decompress and recompress with no compression (stored as raw deflate with level 0)
-fn process_gz(path: &Path, output_dir: Option<&PathBuf>, _verbose: bool) -> Result<PathBuf, Box<dyn std::error::Error>> {
+fn process_gz(
+    path: &Path,
+    output_dir: Option<&PathBuf>,
+    _verbose: bool,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let output_path = determine_output_path(path, output_dir)?;
 
     // Read and decompress the input
@@ -140,17 +190,21 @@ fn process_gz(path: &Path, output_dir: Option<&PathBuf>, _verbose: bool) -> Resu
 
 /// Process PNG files
 /// Apply Paeth filter with zero compression
-fn process_png(path: &Path, output_dir: Option<&PathBuf>, verbose: bool) -> Result<PathBuf, Box<dyn std::error::Error>> {
+fn process_png(
+    path: &Path,
+    output_dir: Option<&PathBuf>,
+    verbose: bool,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let output_path = determine_output_path(path, output_dir)?;
 
     // Read the PNG file
     let file = File::open(path)?;
-    let decoder = png::Decoder::new(file);
-    
+    let decoder = png::Decoder::new(BufReader::new(file));
+
     let mut reader = decoder.read_info()?;
-    let mut buf = vec![0; reader.output_buffer_size()];
+    let mut buf = vec![0; reader.output_buffer_size().expect("Failed to get buffer size")];
     let info = reader.next_frame(&mut buf)?;
-    
+
     // Calculate actual data size (height * (row_bytes + 1 for filter byte))
     let bytes_per_pixel = info.color_type.samples() as usize;
     let row_bytes = info.width as usize * bytes_per_pixel;
@@ -162,9 +216,9 @@ fn process_png(path: &Path, output_dir: Option<&PathBuf>, verbose: bool) -> Resu
     let mut encoder = Encoder::new(output_file, info.width, info.height);
     encoder.set_color(info.color_type);
     encoder.set_depth(info.bit_depth);
-    encoder.set_filter(FilterType::Paeth);
-    encoder.set_compression(png::Compression::Fast);
-    
+    encoder.set_filter(Filter::Paeth);
+    encoder.set_compression(png::Compression::NoCompression);
+
     let mut writer = encoder.write_header()?;
     writer.write_image_data(data)?;
     writer.finish()?;
@@ -180,13 +234,19 @@ fn process_png(path: &Path, output_dir: Option<&PathBuf>, verbose: bool) -> Resu
 }
 
 /// Determine the output path for a processed file
-fn determine_output_path(input_path: &Path, output_dir: Option<&PathBuf>) -> Result<PathBuf, Box<dyn std::error::Error>> {
+fn determine_output_path(
+    input_path: &Path,
+    output_dir: Option<&PathBuf>,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
     if let Some(dir) = output_dir {
         fs::create_dir_all(dir)?;
         Ok(dir.join(input_path.file_name().ok_or("Invalid filename")?))
     } else {
         // Overwrite in place - create temp name then rename
-        let temp_path = input_path.with_extension(format!("{}.tmp", input_path.extension().unwrap_or_default().to_string_lossy()));
+        let temp_path = input_path.with_extension(format!(
+            "{}.tmp",
+            input_path.extension().unwrap_or_default().to_string_lossy()
+        ));
         Ok(temp_path)
     }
 }
@@ -217,43 +277,132 @@ mod tests {
     }
 
     #[test]
-    fn test_extension_matching_zip_based() {
-        let extensions = ["docx", "xlsx", "pptx", "ipynb", "zip", "xlsm", "pptm"];
-        for ext in extensions {
-            let path = PathBuf::from(format!("test.{}", ext));
-            let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-            match extension.to_lowercase().as_str() {
-                "docx" | "xlsx" | "pptx" | "xlsm" | "pptm" | "dotx" | "dotm" | "xltm" | "potx" | "potm"
-                | "ipynb" | "zip" => {}, // Expected match
-                _ => panic!("Extension {} should match ZIP-based", ext),
-            }
+    fn test_detect_file_type_zip() {
+        let temp_dir = TempDir::new().unwrap();
+        let zip_path = temp_dir.path().join("test.zip");
+        
+        // Create a ZIP file
+        {
+            use zip::write::FileOptions;
+            use zip::ZipWriter;
+
+            let file = File::create(&zip_path).unwrap();
+            let mut zip = ZipWriter::new(file);
+            let options: FileOptions<'_, ()> = FileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+            zip.start_file("test.txt", options).unwrap();
+            zip.write_all(b"Test").unwrap();
+            zip.finish().unwrap();
         }
+
+        // Detect file type - should work regardless of extension
+        let detected = detect_file_type(&zip_path);
+        assert_eq!(detected, Some(FileType::Zip));
     }
 
     #[test]
-    fn test_extension_matching_png() {
-        let path = PathBuf::from("test.png");
-        let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        assert_eq!(extension.to_lowercase().as_str(), "png");
-    }
+    fn test_detect_file_type_zip_wrong_extension() {
+        let temp_dir = TempDir::new().unwrap();
+        let zip_path = temp_dir.path().join("test.dat"); // Wrong extension
+        
+        // Create a ZIP file with wrong extension
+        {
+            use zip::write::FileOptions;
+            use zip::ZipWriter;
 
-    #[test]
-    fn test_extension_matching_gz() {
-        let path = PathBuf::from("test.txt.gz");
-        let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        assert_eq!(extension.to_lowercase().as_str(), "gz");
-    }
-
-    #[test]
-    fn test_unsupported_extension() {
-        let path = PathBuf::from("test.pdf");
-        let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        match extension.to_lowercase().as_str() {
-            "png" | "gz" => panic!("Should not match"),
-            "docx" | "xlsx" | "pptx" | "xlsm" | "pptm" | "dotx" | "dotm" | "xltm" | "potx" | "potm"
-            | "ipynb" | "zip" => panic!("Should not match ZIP-based"),
-            _ => {}, // Expected for unsupported
+            let file = File::create(&zip_path).unwrap();
+            let mut zip = ZipWriter::new(file);
+            let options: FileOptions<'_, ()> = FileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+            zip.start_file("test.txt", options).unwrap();
+            zip.write_all(b"Test").unwrap();
+            zip.finish().unwrap();
         }
+
+        // Should detect ZIP despite wrong extension
+        let detected = detect_file_type(&zip_path);
+        assert_eq!(detected, Some(FileType::Zip));
+    }
+
+    #[test]
+    fn test_detect_file_type_png() {
+        let temp_dir = TempDir::new().unwrap();
+        let png_path = temp_dir.path().join("test.png");
+        
+        // Create a minimal PNG file
+        create_minimal_png(&png_path);
+
+        // Detect file type
+        let detected = detect_file_type(&png_path);
+        assert_eq!(detected, Some(FileType::Png));
+    }
+
+    #[test]
+    fn test_detect_file_type_png_wrong_extension() {
+        let temp_dir = TempDir::new().unwrap();
+        let png_path = temp_dir.path().join("test.bin"); // Wrong extension
+        
+        // Create a PNG file with wrong extension
+        create_minimal_png(&png_path);
+
+        // Should detect PNG despite wrong extension
+        let detected = detect_file_type(&png_path);
+        assert_eq!(detected, Some(FileType::Png));
+    }
+
+    #[test]
+    fn test_detect_file_type_gz() {
+        let temp_dir = TempDir::new().unwrap();
+        let gz_path = temp_dir.path().join("test.gz");
+        
+        // Create a GZ file
+        {
+            use flate2::write::GzEncoder;
+            use flate2::Compression;
+
+            let file = File::create(&gz_path).unwrap();
+            let mut encoder = GzEncoder::new(file, Compression::default());
+            encoder.write_all(b"Test data").unwrap();
+            encoder.finish().unwrap();
+        }
+
+        // Detect file type
+        let detected = detect_file_type(&gz_path);
+        assert_eq!(detected, Some(FileType::Gz));
+    }
+
+    #[test]
+    fn test_detect_file_type_gz_wrong_extension() {
+        let temp_dir = TempDir::new().unwrap();
+        let gz_path = temp_dir.path().join("test.data"); // Wrong extension
+        
+        // Create a GZ file with wrong extension
+        {
+            use flate2::write::GzEncoder;
+            use flate2::Compression;
+
+            let file = File::create(&gz_path).unwrap();
+            let mut encoder = GzEncoder::new(file, Compression::default());
+            encoder.write_all(b"Test data").unwrap();
+            encoder.finish().unwrap();
+        }
+
+        // Should detect GZ despite wrong extension
+        let detected = detect_file_type(&gz_path);
+        assert_eq!(detected, Some(FileType::Gz));
+    }
+
+    #[test]
+    fn test_detect_file_type_unsupported() {
+        let temp_dir = TempDir::new().unwrap();
+        let txt_path = temp_dir.path().join("test.txt");
+        
+        // Create a text file (unsupported)
+        std::fs::write(&txt_path, "Hello, World!").unwrap();
+
+        // Should not detect any supported type
+        let detected = detect_file_type(&txt_path);
+        assert_eq!(detected, None);
     }
 
     #[test]
@@ -269,7 +418,8 @@ mod tests {
 
             let file = File::create(&input_path).unwrap();
             let mut zip = ZipWriter::new(file);
-            let options = FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+            let options: FileOptions<'_, ()> = FileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
 
             zip.start_file("content.txt", options).unwrap();
             zip.write_all(b"Test content").unwrap();
@@ -290,5 +440,29 @@ mod tests {
 
         let entry = archive.by_index(0).unwrap();
         assert_eq!(entry.name(), "content.txt");
+    }
+
+    /// Helper function to create a minimal valid PNG file
+    fn create_minimal_png(path: &Path) {
+        use png::{BitDepth, ColorType, Encoder};
+        
+        let width = 2;
+        let height = 2;
+        // 2x2 RGB image = 2 * 2 * 3 = 12 bytes
+        let data = vec![
+            0u8, 0, 0,       // Pixel 1: RGB
+            255, 255, 255,   // Pixel 2: RGB
+            128, 128, 128,   // Pixel 3: RGB
+            64, 64, 64,      // Pixel 4: RGB
+        ];
+        
+        let file = File::create(path).unwrap();
+        let mut encoder = Encoder::new(file, width, height);
+        encoder.set_color(ColorType::Rgb);
+        encoder.set_depth(BitDepth::Eight);
+        
+        let mut writer = encoder.write_header().unwrap();
+        writer.write_image_data(&data).unwrap();
+        writer.finish().unwrap();
     }
 }
