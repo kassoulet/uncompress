@@ -26,6 +26,15 @@ fn main() {
     
     // Generate test GZ file with wrong extension
     generate_test_gz(fixtures_dir.join("test.data"));
+    
+    // Generate test TIFF file (RGB)
+    generate_test_tiff_rgb(fixtures_dir.join("test.tiff"));
+    
+    // Generate test TIFF file with wrong extension
+    generate_test_tiff_rgb(fixtures_dir.join("test.tif_data"));
+    
+    // Generate test TIFF file (grayscale)
+    generate_test_tiff_gray(fixtures_dir.join("test_gray.tiff"));
 
     println!("Test fixtures generated successfully in {:?}", fixtures_dir);
 }
@@ -80,7 +89,7 @@ fn generate_test_png(path: PathBuf) {
     let mut writer = encoder.write_header().expect("Failed to write PNG header");
     writer.write_image_data(&data).expect("Failed to write PNG data");
     writer.finish().expect("Failed to finish PNG");
-    
+
     println!("Created: {:?}", path);
 }
 
@@ -92,6 +101,43 @@ fn generate_test_gz(path: PathBuf) {
     let mut encoder = GzEncoder::new(file, Compression::default());
     encoder.write_all(b"This is compressed test data for GZ fixtures.").expect("Failed to write GZ");
     encoder.finish().expect("Failed to finish GZ");
+
+    println!("Created: {:?}", path);
+}
+
+fn generate_test_tiff_rgb(path: PathBuf) {
+    use tiff::encoder::colortype::RGB8;
+    use tiff::encoder::TiffEncoder;
+
+    let file = File::create(&path).expect("Failed to create TIFF file");
+    let mut encoder = TiffEncoder::new(file).expect("Failed to create TIFF encoder");
+    let mut image = encoder.new_image::<RGB8>(4, 4).expect("Failed to create TIFF image");
     
+    // Create RGB image data (4x4 pixels)
+    let mut data = Vec::new();
+    for y in 0..4 {
+        for x in 0..4 {
+            data.push((x * 64) as u8); // R
+            data.push((y * 64) as u8); // G
+            data.push(128); // B
+        }
+    }
+    
+    image.write_data(&data).expect("Failed to write TIFF data");
+    println!("Created: {:?}", path);
+}
+
+fn generate_test_tiff_gray(path: PathBuf) {
+    use tiff::encoder::colortype::Gray8;
+    use tiff::encoder::TiffEncoder;
+
+    let file = File::create(&path).expect("Failed to create TIFF file");
+    let mut encoder = TiffEncoder::new(file).expect("Failed to create TIFF encoder");
+    let mut image = encoder.new_image::<Gray8>(4, 4).expect("Failed to create TIFF image");
+    
+    // Create grayscale image data (4x4 pixels)
+    let data: Vec<u8> = (0..16).map(|i| (i * 16) as u8).collect();
+    
+    image.write_data(&data).expect("Failed to write TIFF data");
     println!("Created: {:?}", path);
 }

@@ -185,6 +185,50 @@ fn test_process_directory_recursive() {
     assert!(output_dir.join("test.bin").exists()); // PNG with wrong ext
     assert!(output_dir.join("test.txt.gz").exists());
     assert!(output_dir.join("test.data").exists()); // GZ with wrong ext
+    assert!(output_dir.join("test.tiff").exists());
+    assert!(output_dir.join("test.tif_data").exists()); // TIFF with wrong ext
+    assert!(output_dir.join("test_gray.tiff").exists());
+}
+
+/// Test processing a TIFF file with correct extension
+#[test]
+fn test_process_tiff_with_correct_extension() {
+    let temp_dir = TempDir::new().unwrap();
+    let input_file = fixtures_dir().join("test.tiff");
+    let output_dir = temp_dir.path().join("output");
+
+    let mut cmd = assert_cmd::Command::cargo_bin("uncompress").unwrap();
+    cmd.arg("-o")
+        .arg(&output_dir)
+        .arg("-v")
+        .arg(&input_file)
+        .assert()
+        .success();
+
+    // Verify output file exists
+    let output_file = output_dir.join("test.tiff");
+    assert!(output_file.exists());
+}
+
+/// Test processing a TIFF file with WRONG extension (tests magic byte detection)
+#[test]
+fn test_process_tiff_with_wrong_extension() {
+    let temp_dir = TempDir::new().unwrap();
+    // test.tif_data has TIFF magic bytes but wrong extension
+    let input_file = fixtures_dir().join("test.tif_data");
+    let output_dir = temp_dir.path().join("output");
+
+    let mut cmd = assert_cmd::Command::cargo_bin("uncompress").unwrap();
+    cmd.arg("-o")
+        .arg(&output_dir)
+        .arg("-v")
+        .arg(&input_file)
+        .assert()
+        .success();
+
+    // Verify output file exists (should be processed despite wrong extension)
+    let output_file = output_dir.join("test.tif_data");
+    assert!(output_file.exists());
 }
 
 /// Test that unsupported file types are skipped

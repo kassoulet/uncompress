@@ -15,6 +15,10 @@ const ZIP_MAGIC: &[u8] = &[0x50, 0x4B, 0x03, 0x04];
 const PNG_MAGIC: &[u8] = &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
 /// Magic bytes for GZ files (\x1f\x8b)
 const GZ_MAGIC: &[u8] = &[0x1F, 0x8B];
+/// Magic bytes for TIFF little-endian (II*\x00)
+const TIFF_LE_MAGIC: &[u8] = &[0x49, 0x49, 0x2A, 0x00];
+/// Magic bytes for TIFF big-endian (MM\x00*)
+const TIFF_BE_MAGIC: &[u8] = &[0x4D, 0x4D, 0x00, 0x2A];
 
 /// File types detected by magic bytes
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,6 +26,7 @@ enum FileType {
     Zip,
     Gz,
     Png,
+    Tiff,
 }
 
 /// Detect file type by reading magic bytes from the beginning of the file
@@ -47,13 +52,21 @@ fn detect_file_type(path: &Path) -> Option<FileType> {
         return Some(FileType::Gz);
     }
     
+    // Check for TIFF (4 bytes) - both little-endian and big-endian
+    if bytes_read >= 4 {
+        if buffer[..4] == *TIFF_LE_MAGIC || buffer[..4] == *TIFF_BE_MAGIC {
+            return Some(FileType::Tiff);
+        }
+    }
+    
     None
 }
 
 /// Decompress files for better git storage
 ///
-/// Handles ZIP-based files (docx, xlsx, ipynb, etc.), GZ files, and PNG images.
+/// Handles ZIP-based files (docx, xlsx, ipynb, etc.), GZ files, PNG images, and TIFF/GeoTIFF files.
 /// For PNG, applies Paeth filter with zero compression.
+/// For TIFF, recompresses with no compression and predictor filter.
 /// File type detection is based on magic bytes, not file extensions.
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -104,6 +117,7 @@ fn process_file(path: &Path, output_dir: Option<&PathBuf>, verbose: bool) {
         Some(FileType::Png) => process_png(path, output_dir, verbose),
         Some(FileType::Gz) => process_gz(path, output_dir, verbose),
         Some(FileType::Zip) => process_zip_based(path, output_dir, verbose),
+        Some(FileType::Tiff) => process_tiff(path, output_dir, verbose),
         None => {
             if verbose {
                 println!("Skipping unsupported file type: {}", path.display());
@@ -227,6 +241,89 @@ fn process_png(
         println!(
             "PNG: {}x{}, {:?}, {:?}, Paeth filter, no compression",
             info.width, info.height, info.color_type, info.bit_depth
+        );
+    }
+
+    Ok(output_path)
+}
+
+/// Process TIFF files (including GeoTIFF)
+/// Recompress with no compression and horizontal predictor
+fn process_tiff(
+    path: &Path,
+    output_dir: Option<&PathBuf>,
+    verbose: bool,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let output_path = determine_output_path(path, output_dir)?;
+
+    // Read the TIFF file
+    let mut decoder = tiff::decoder::Decoder::new(File::open(path)?)?;
+    
+    // Get image information
+    let width = decoder.dimensions()?.0;
+    let height = decoder.dimensions()?.1;
+    let photometric_interpretation: u16 = decoder.get_tag(tiff::tags::Tag::PhotometricInterpretation)?
+        .into_u16()?;
+    
+    // Read the image data
+    let image = decoder.read_image()?;
+    
+    // Create output TIFF with no compression and predictor using builder pattern
+    let mut encoder = tiff::encoder::TiffEncoder::new(File::create(&output_path)?)?
+        .with_compression(tiff::encoder::Compression::Uncompressed)
+        .with_predictor(tiff::encoder::Predictor::Horizontal);
+    
+    // Write the image data based on the decoded type
+    match image {
+        tiff::decoder::DecodingResult::U8(data) => {
+            // Determine color type based on photometric interpretation and samples
+            let samples: u16 = decoder.get_tag(tiff::tags::Tag::SamplesPerPixel)?.into_u16()?;
+            
+            if samples == 1 {
+                // Grayscale
+                let image_encoder = encoder.new_image::<tiff::encoder::colortype::Gray8>(width, height)?;
+                image_encoder.write_data(&data)?;
+            } else if samples == 3 {
+                // RGB
+                let image_encoder = encoder.new_image::<tiff::encoder::colortype::RGB8>(width, height)?;
+                image_encoder.write_data(&data)?;
+            } else if samples == 4 {
+                // RGBA
+                let image_encoder = encoder.new_image::<tiff::encoder::colortype::RGBA8>(width, height)?;
+                image_encoder.write_data(&data)?;
+            } else {
+                // Fallback: try grayscale
+                let image_encoder = encoder.new_image::<tiff::encoder::colortype::Gray8>(width, height)?;
+                image_encoder.write_data(&data)?;
+            }
+        }
+        tiff::decoder::DecodingResult::U16(data) => {
+            // For 16-bit images
+            let samples: u16 = decoder.get_tag(tiff::tags::Tag::SamplesPerPixel)?.into_u16()?;
+            
+            if samples == 1 {
+                let image_encoder = encoder.new_image::<tiff::encoder::colortype::Gray16>(width, height)?;
+                image_encoder.write_data(&data)?;
+            } else if samples == 3 {
+                let image_encoder = encoder.new_image::<tiff::encoder::colortype::RGB16>(width, height)?;
+                image_encoder.write_data(&data)?;
+            } else if samples == 4 {
+                let image_encoder = encoder.new_image::<tiff::encoder::colortype::RGBA16>(width, height)?;
+                image_encoder.write_data(&data)?;
+            } else {
+                let image_encoder = encoder.new_image::<tiff::encoder::colortype::Gray16>(width, height)?;
+                image_encoder.write_data(&data)?;
+            }
+        }
+        _ => {
+            return Err("Unsupported TIFF bit depth".into());
+        }
+    }
+
+    if verbose {
+        println!(
+            "TIFF: {}x{}, photometric={}, uncompressed with horizontal predictor",
+            width, height, photometric_interpretation
         );
     }
 
@@ -393,6 +490,32 @@ mod tests {
     }
 
     #[test]
+    fn test_detect_file_type_tiff() {
+        let temp_dir = TempDir::new().unwrap();
+        let tiff_path = temp_dir.path().join("test.tiff");
+
+        // Create a TIFF file
+        create_minimal_tiff(&tiff_path);
+
+        // Detect file type
+        let detected = detect_file_type(&tiff_path);
+        assert_eq!(detected, Some(FileType::Tiff));
+    }
+
+    #[test]
+    fn test_detect_file_type_tiff_wrong_extension() {
+        let temp_dir = TempDir::new().unwrap();
+        let tiff_path = temp_dir.path().join("test.dat"); // Wrong extension
+
+        // Create a TIFF file with wrong extension
+        create_minimal_tiff(&tiff_path);
+
+        // Should detect TIFF despite wrong extension
+        let detected = detect_file_type(&tiff_path);
+        assert_eq!(detected, Some(FileType::Tiff));
+    }
+
+    #[test]
     fn test_detect_file_type_unsupported() {
         let temp_dir = TempDir::new().unwrap();
         let txt_path = temp_dir.path().join("test.txt");
@@ -445,7 +568,7 @@ mod tests {
     /// Helper function to create a minimal valid PNG file
     fn create_minimal_png(path: &Path) {
         use png::{BitDepth, ColorType, Encoder};
-        
+
         let width = 2;
         let height = 2;
         // 2x2 RGB image = 2 * 2 * 3 = 12 bytes
@@ -455,14 +578,34 @@ mod tests {
             128, 128, 128,   // Pixel 3: RGB
             64, 64, 64,      // Pixel 4: RGB
         ];
-        
+
         let file = File::create(path).unwrap();
         let mut encoder = Encoder::new(file, width, height);
         encoder.set_color(ColorType::Rgb);
         encoder.set_depth(BitDepth::Eight);
-        
+
         let mut writer = encoder.write_header().unwrap();
         writer.write_image_data(&data).unwrap();
         writer.finish().unwrap();
+    }
+
+    /// Helper function to create a minimal valid TIFF file
+    fn create_minimal_tiff(path: &Path) {
+        use tiff::encoder::colortype::RGB8;
+        use tiff::encoder::TiffEncoder;
+
+        let file = File::create(path).unwrap();
+        let mut encoder = TiffEncoder::new(file).unwrap();
+        let image = encoder.new_image::<RGB8>(2, 2).unwrap();
+        
+        // 2x2 RGB image = 2 * 2 * 3 = 12 bytes
+        let data = vec![
+            0u8, 0, 0,       // Pixel 1: RGB
+            255, 255, 255,   // Pixel 2: RGB
+            128, 128, 128,   // Pixel 3: RGB
+            64, 64, 64,      // Pixel 4: RGB
+        ];
+        
+        image.write_data(&data).unwrap();
     }
 }

@@ -17,6 +17,7 @@ flate2 = "1.0"
 png = "0.18"
 zip = "8.1.0"
 walkdir = "2"
+tiff = "0.11"
 
 [dev-dependencies]
 tempfile = "3"
