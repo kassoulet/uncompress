@@ -1,0 +1,29 @@
+[package]
+name = "uncompress"
+version = "0.1.0"
+edition = "2021"
+description = "Decompress files (zip, gz, png) for better git storage over time of mutable files"
+authors = ["Gautier <gautier@soundconverter.org>"]
+repository = "https://github.com/kassoulet/uncompress"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+keywords = ["compression", "git", "zip", "png", "optimization"]
+categories = ["compression", "command-line-utilities"]
+rust-version = "1.70"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+flate2 = "1.0"
+png = "0.18"
+zip = "8.1.0"
+walkdir = "2"
+
+[dev-dependencies]
+tempfile = "3"
+assert_cmd = "2"
+predicates = "3"
+
+[profile.release]
+lto = true
+strip = true
+codegen-units = 1

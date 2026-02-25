@@ -1,0 +1,18 @@
+[tool.clippy]
+# Clippy configuration
+# Run with: cargo clippy -- -W clippy::all
+
+# Lint levels
+warn = [
+    "clippy::all",
+    "clippy::pedantic",
+    "clippy::nursery",
+]
+
+allow = [
+    # Allow some pedantic lints that are too strict
+    "clippy::missing_errors_doc",
+    "clippy::missing_panics_doc",
+    "clippy::module_name_repetitions",
+    "clippy::must_use_candidate",
+]
