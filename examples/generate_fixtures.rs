@@ -111,7 +111,7 @@ fn generate_test_tiff_rgb(path: PathBuf) {
 
     let file = File::create(&path).expect("Failed to create TIFF file");
     let mut encoder = TiffEncoder::new(file).expect("Failed to create TIFF encoder");
-    let mut image = encoder.new_image::<RGB8>(4, 4).expect("Failed to create TIFF image");
+    let image = encoder.new_image::<RGB8>(4, 4).expect("Failed to create TIFF image");
     
     // Create RGB image data (4x4 pixels)
     let mut data = Vec::new();
@@ -133,7 +133,7 @@ fn generate_test_tiff_gray(path: PathBuf) {
 
     let file = File::create(&path).expect("Failed to create TIFF file");
     let mut encoder = TiffEncoder::new(file).expect("Failed to create TIFF encoder");
-    let mut image = encoder.new_image::<Gray8>(4, 4).expect("Failed to create TIFF image");
+    let image = encoder.new_image::<Gray8>(4, 4).expect("Failed to create TIFF image");
     
     // Create grayscale image data (4x4 pixels)
     let data: Vec<u8> = (0..16).map(|i| (i * 16) as u8).collect();

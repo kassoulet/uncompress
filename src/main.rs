@@ -3,7 +3,7 @@ use flate2::write::GzEncoder;
 use flate2::Compression;
 use png::{Encoder, Filter};
 use std::fs::{self, File};
-use std::io::{BufReader, Read, Write};
+use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 use zip::write::FileOptions;
@@ -127,9 +127,18 @@ fn process_file(path: &Path, output_dir: Option<&PathBuf>, verbose: bool) {
     };
 
     match result {
-        Ok(new_path) => {
-            if verbose {
-                println!("Processed: {} -> {}", path.display(), new_path.display());
+        Ok(temp_path) => {
+            // If processing in-place (no output dir), rename temp file to original
+            if output_dir.is_none() && temp_path != path {
+                if let Err(e) = fs::rename(&temp_path, path) {
+                    eprintln!("Error replacing {}: {}", path.display(), e);
+                    return;
+                }
+                if verbose {
+                    println!("Processed: {}", path.display());
+                }
+            } else if verbose {
+                println!("Processed: {} -> {}", path.display(), temp_path.display());
             }
         }
         Err(e) => {
@@ -140,6 +149,7 @@ fn process_file(path: &Path, output_dir: Option<&PathBuf>, verbose: bool) {
 
 /// Process ZIP-based files (docx, xlsx, ipynb, etc.)
 /// Recompress with STORED method (no compression)
+/// Uses streaming to avoid loading entire file into memory
 fn process_zip_based(
     path: &Path,
     output_dir: Option<&PathBuf>,
@@ -168,9 +178,8 @@ fn process_zip_based(
 
         zip_writer.start_file(&outpath, options)?;
 
-        let mut buffer = Vec::new();
-        entry.read_to_end(&mut buffer)?;
-        zip_writer.write_all(&buffer)?;
+        // Stream the entry data directly to the writer (no buffering in memory)
+        std::io::copy(&mut entry, &mut zip_writer)?;
     }
 
     zip_writer.finish()?;
@@ -180,6 +189,7 @@ fn process_zip_based(
 
 /// Process GZ files
 /// Decompress and recompress with no compression (stored as raw deflate with level 0)
+/// Uses streaming to avoid loading entire file into memory
 fn process_gz(
     path: &Path,
     output_dir: Option<&PathBuf>,
@@ -187,16 +197,14 @@ fn process_gz(
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let output_path = determine_output_path(path, output_dir)?;
 
-    // Read and decompress the input
+    // Stream decompression directly to recompression (no intermediate buffer)
     let input_file = File::open(path)?;
-    let mut decoder = flate2::read::GzDecoder::new(input_file);
-    let mut decompressed_data = Vec::new();
-    decoder.read_to_end(&mut decompressed_data)?;
+    let decoder = flate2::read::GzDecoder::new(input_file);
 
-    // Recompress with zero compression level
     let output_file = File::create(&output_path)?;
     let mut encoder = GzEncoder::new(output_file, Compression::none());
-    encoder.write_all(&decompressed_data)?;
+    
+    std::io::copy(&mut decoder.take(u64::MAX), &mut encoder)?;
     encoder.finish()?;
 
     Ok(output_path)
@@ -204,6 +212,7 @@ fn process_gz(
 
 /// Process PNG files
 /// Apply Paeth filter with zero compression
+/// Note: PNG processing requires holding one frame in memory for filter application
 fn process_png(
     path: &Path,
     output_dir: Option<&PathBuf>,
@@ -211,7 +220,7 @@ fn process_png(
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let output_path = determine_output_path(path, output_dir)?;
 
-    // Read the PNG file
+    // Read the PNG file using streaming decoder
     let file = File::open(path)?;
     let decoder = png::Decoder::new(BufReader::new(file));
 
@@ -249,6 +258,7 @@ fn process_png(
 
 /// Process TIFF files (including GeoTIFF)
 /// Recompress with no compression and horizontal predictor
+/// Note: TIFF processing requires holding the image in memory for re-encoding
 fn process_tiff(
     path: &Path,
     output_dir: Option<&PathBuf>,
@@ -258,27 +268,27 @@ fn process_tiff(
 
     // Read the TIFF file
     let mut decoder = tiff::decoder::Decoder::new(File::open(path)?)?;
-    
+
     // Get image information
     let width = decoder.dimensions()?.0;
     let height = decoder.dimensions()?.1;
     let photometric_interpretation: u16 = decoder.get_tag(tiff::tags::Tag::PhotometricInterpretation)?
         .into_u16()?;
-    
+
     // Read the image data
     let image = decoder.read_image()?;
-    
+
     // Create output TIFF with no compression and predictor using builder pattern
     let mut encoder = tiff::encoder::TiffEncoder::new(File::create(&output_path)?)?
         .with_compression(tiff::encoder::Compression::Uncompressed)
         .with_predictor(tiff::encoder::Predictor::Horizontal);
-    
+
     // Write the image data based on the decoded type
     match image {
         tiff::decoder::DecodingResult::U8(data) => {
             // Determine color type based on photometric interpretation and samples
             let samples: u16 = decoder.get_tag(tiff::tags::Tag::SamplesPerPixel)?.into_u16()?;
-            
+
             if samples == 1 {
                 // Grayscale
                 let image_encoder = encoder.new_image::<tiff::encoder::colortype::Gray8>(width, height)?;
@@ -300,7 +310,7 @@ fn process_tiff(
         tiff::decoder::DecodingResult::U16(data) => {
             // For 16-bit images
             let samples: u16 = decoder.get_tag(tiff::tags::Tag::SamplesPerPixel)?.into_u16()?;
-            
+
             if samples == 1 {
                 let image_encoder = encoder.new_image::<tiff::encoder::colortype::Gray16>(width, height)?;
                 image_encoder.write_data(&data)?;
@@ -339,12 +349,12 @@ fn determine_output_path(
         fs::create_dir_all(dir)?;
         Ok(dir.join(input_path.file_name().ok_or("Invalid filename")?))
     } else {
-        // Overwrite in place - create temp name then rename
-        let temp_path = input_path.with_extension(format!(
-            "{}.tmp",
-            input_path.extension().unwrap_or_default().to_string_lossy()
-        ));
-        Ok(temp_path)
+        // Overwrite in place - create temp file with .unc. prefix
+        // e.g., file.zip -> .unc.file.zip
+        let file_name = input_path.file_name().ok_or("Invalid filename")?;
+        let parent = input_path.parent().unwrap_or(Path::new(""));
+        let temp_name = format!(".unc.{}", file_name.to_string_lossy());
+        Ok(parent.join(temp_name))
     }
 }
 
@@ -370,7 +380,7 @@ mod tests {
         let output_dir: Option<&PathBuf> = None;
 
         let result = determine_output_path(&input_path, output_dir).unwrap();
-        assert_eq!(result, PathBuf::from("/some/path/test.zip.tmp"));
+        assert_eq!(result, PathBuf::from("/some/path/.unc.test.zip"));
     }
 
     #[test]
