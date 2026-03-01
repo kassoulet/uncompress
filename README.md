@@ -15,10 +15,21 @@ When storing binary files in Git repositories, compression will actually increas
 - **ZIP-based files** (`.docx`, `.xlsx`, `.pptx`, `.ipynb`, etc.): Recompresses with STORED method (no compression)
 - **GZIP files** (`.gz`): Recompresses with zero compression level
 - **PNG images**: Applies Paeth filter with no compression
+- **TIFF/GeoTIFF images**: Uncompressed with horizontal predictor, full metadata preservation
 
 > Use `uncompress` if your compressed files may change over time (screenshots, tests data, etc.) and you want to keep your Git repository size small.
 
 > If the uncompressed files are part of a release, consider using an optimizer during your build process to minimize their sizes.
+
+## Features
+
+- **Progress output**: Shows filename, type, input/output sizes, and compression ratio
+- **Skip uncompressed**: Automatically detects and skips already optimized files
+- **Magic byte detection**: Identifies file types by content, not extension
+- **BigTIFF support**: Handles both standard TIFF and BigTIFF formats
+- **Full TIFF format support**: U8, U16, F32, F64, signed/unsigned integers
+- **GeoTIFF metadata preservation**: Maintains all geospatial tags and metadata
+- **Optional TIFF support**: Build without TIFF/GeoTIFF support for smaller binary
 
 ## Installation
 
@@ -36,6 +47,29 @@ The binary will be available at `target/release/uncompress`.
 
 ```bash
 cargo install uncompress
+```
+
+### Build Without TIFF Support
+
+To build a smaller binary without TIFF/GeoTIFF support (requires no external dependencies):
+
+```bash
+cargo build --release --no-default-features
+```
+
+### GDAL Dependency
+
+For TIFF/GeoTIFF files with advanced compression (ZSTD, WebP, JPEG, LZW, Deflate) or float formats (F32, F64), `uncompress` uses `gdal_translate` as a fallback. Install GDAL tools:
+
+```bash
+# Ubuntu/Debian
+sudo apt-get install gdal-bin
+
+# macOS
+brew install gdal
+
+# Windows
+# Download from https://gdal.org/download.html
 ```
 
 ## Usage
@@ -71,6 +105,21 @@ Options:
   -V, --version          Print version
 ```
 
+### Output Format
+
+```
+filename | TYPE | input_size → output_size | change (ratio%)
+```
+
+Examples:
+```
+document.docx | ZIP | 2.45 MB → 1.23 MB | -1.22 MB (50.2%)
+image.png | PNG | 8.24 MB → 8.24 MB | +0 B (100.0%)
+data.tif | TIFF | 1.47 GB → 4.69 GB | +3.21 GB (318.0%)
+already_optimized.zip | ZIP | Already uncompressed | Skipped
+unknown.dat | UNSUPPORTED | Skipped
+```
+
 ## Supported File Types
 
 | Extension | Description | Processing |
@@ -82,8 +131,23 @@ Options:
 | `.xlsm`, `.pptm`, `.dotx`, `.dotm`, `.xltm`, `.potx`, `.potm` | Office variants | STORED (no compression) |
 | `.zip` | ZIP archive | STORED (no compression) |
 | `.gz` | GZIP compressed | Zero compression level |
-| `.png` | PNG image | Paeth filter, minimal compression |
-| `.tiff`, `.tif` | TIFF/GeoTIFF image | Uncompressed with horizontal predictor, **full metadata preservation** |
+| `.png` | PNG image | Paeth filter, no compression |
+| `.tiff`, `.tif` | TIFF/GeoTIFF image | Uncompressed + horizontal predictor |
+
+### TIFF/GeoTIFF Format Support
+
+**Bit Depths:**
+- **Native** (tiff crate): U8, U16
+- **Via GDAL**: F32, F64, F16, U32, U64, I8, I16, I32, I64
+
+**Compression Types:**
+- **Native**: Uncompressed
+- **Via GDAL**: ZSTD, WebP, JPEG, LZW, Deflate
+
+**Features:**
+- BigTIFF support (files > 4GB)
+- Full metadata preservation (GeoTIFF tags, georeferencing)
+- Horizontal predictor for better compression
 
 ## Use Cases
 
@@ -112,6 +176,7 @@ git commit -m "Add documents (uncompressed for better git storage)"
 
 - Rust 1.70 or later
 - Cargo
+- GDAL tools (optional, for advanced TIFF/GeoTIFF support)
 
 ### Build Commands
 
@@ -122,6 +187,9 @@ cargo build
 # Release build (optimized)
 cargo build --release
 
+# Build without TIFF support (smaller binary)
+cargo build --release --no-default-features
+
 # Run tests
 cargo test
 
@@ -131,6 +199,12 @@ cargo clippy -- -W clippy::all
 # Format code
 cargo fmt
 ```
+
+### Features
+
+| Feature | Default | Description |
+|---------|---------|-------------|
+| `tiff-support` | Yes | Enable TIFF/GeoTIFF support (requires gdal crate) |
 
 ## License
 
