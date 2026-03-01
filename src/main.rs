@@ -486,6 +486,8 @@ fn process_tiff(
         .with_predictor(Predictor::Horizontal);
 
     // Write the image data based on the decoded type and preserve tags
+    // Note: tiff encoder only supports U8 and U16 natively
+    // Other types (U32, U64, I8, I16, I32, I64, F32, F64, F16) use gdal fallback
     match image {
         tiff::decoder::DecodingResult::U8(data) => {
             // Determine color type based on photometric interpretation and samples
@@ -509,9 +511,8 @@ fn process_tiff(
                 write_preserved_tags_8(&mut image_encoder, &preserved_tags)?;
                 image_encoder.write_data(&data)?;
             } else {
-                return Err(
-                    format!("Unsupported number of samples for 8-bit TIFF: {}", samples).into(),
-                );
+                return process_tiff_with_gdal(path, output_path, verbose, 
+                    format!("Unsupported number of samples for 8-bit TIFF: {}", samples));
             }
         }
         tiff::decoder::DecodingResult::U16(data) => {
@@ -533,13 +534,47 @@ fn process_tiff(
                 write_preserved_tags_16(&mut image_encoder, &preserved_tags)?;
                 image_encoder.write_data(&data)?;
             } else {
-                return Err(
-                    format!("Unsupported number of samples for 16-bit TIFF: {}", samples).into(),
-                );
+                return process_tiff_with_gdal(path, output_path, verbose,
+                    format!("Unsupported number of samples for 16-bit TIFF: {}", samples));
             }
         }
-        _ => {
-            return Err("Unsupported TIFF bit depth".into());
+        // For all other bit depths, use gdal which has full format support
+        tiff::decoder::DecodingResult::U32(_) => {
+            return process_tiff_with_gdal(path, output_path, verbose, 
+                "32-bit integer TIFF requires gdal".to_string());
+        }
+        tiff::decoder::DecodingResult::U64(_) => {
+            return process_tiff_with_gdal(path, output_path, verbose,
+                "64-bit integer TIFF requires gdal".to_string());
+        }
+        tiff::decoder::DecodingResult::I8(_) => {
+            return process_tiff_with_gdal(path, output_path, verbose,
+                "Signed 8-bit TIFF requires gdal".to_string());
+        }
+        tiff::decoder::DecodingResult::I16(_) => {
+            return process_tiff_with_gdal(path, output_path, verbose,
+                "Signed 16-bit TIFF requires gdal".to_string());
+        }
+        tiff::decoder::DecodingResult::I32(_) => {
+            return process_tiff_with_gdal(path, output_path, verbose,
+                "Signed 32-bit integer TIFF requires gdal".to_string());
+        }
+        tiff::decoder::DecodingResult::I64(_) => {
+            return process_tiff_with_gdal(path, output_path, verbose,
+                "Signed 64-bit integer TIFF requires gdal".to_string());
+        }
+        tiff::decoder::DecodingResult::F32(_) => {
+            return process_tiff_with_gdal(path, output_path, verbose,
+                "32-bit float TIFF requires gdal".to_string());
+        }
+        tiff::decoder::DecodingResult::F64(_) => {
+            return process_tiff_with_gdal(path, output_path, verbose,
+                "64-bit float TIFF requires gdal".to_string());
+        }
+        #[cfg(feature = "tiff-support")]
+        tiff::decoder::DecodingResult::F16(_) => {
+            return process_tiff_with_gdal(path, output_path, verbose,
+                "16-bit float TIFF requires gdal".to_string());
         }
     }
 
@@ -554,8 +589,9 @@ fn process_tiff(
 }
 
 #[cfg(feature = "tiff-support")]
-/// Process TIFF files using gdal (for zstd, webp, jpeg, lzw, deflate or other unsupported formats)
+/// Process TIFF files using gdal (for zstd, webp, jpeg, lzw, deflate, float, or other unsupported formats)
 /// Uses gdal_translate to convert to uncompressed TIFF with horizontal predictor
+/// Supports: F32, F64, F16, U32, U64, I8, I16, I32, I64 and compressed formats (ZSTD, WebP, JPEG, LZW, Deflate)
 fn process_tiff_with_gdal(
     path: &Path,
     output_path: &Path,
