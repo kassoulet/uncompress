@@ -27,9 +27,10 @@ When storing binary files in Git repositories, compression will actually increas
 - **Skip uncompressed**: Automatically detects and skips already optimized files
 - **Magic byte detection**: Identifies file types by content, not extension
 - **BigTIFF support**: Handles both standard TIFF and BigTIFF formats
-- **Full TIFF format support**: U8, U16, F32, F64, signed/unsigned integers
+- **Full TIFF format support**: U8, U16, F32, F64, signed/unsigned integers (via `gdal_translate`)
 - **GeoTIFF metadata preservation**: Maintains all geospatial tags and metadata
 - **Optional TIFF support**: Build without TIFF/GeoTIFF support for smaller binary
+- **No GDAL linking**: Uses `gdal_translate` CLI tool only when needed (no build dependencies)
 
 ## Installation
 
@@ -59,7 +60,7 @@ cargo build --release --no-default-features
 
 ### GDAL Dependency
 
-For TIFF/GeoTIFF files with advanced compression (ZSTD, WebP, JPEG, LZW, Deflate) or float formats (F32, F64), `uncompress` uses `gdal_translate` as a fallback. Install GDAL tools:
+For TIFF/GeoTIFF files with advanced compression (ZSTD, WebP, JPEG, LZW, Deflate) or float formats (F32, F64), `uncompress` uses `gdal_translate` as an external tool. Install GDAL tools:
 
 ```bash
 # Ubuntu/Debian
@@ -71,6 +72,8 @@ brew install gdal
 # Windows
 # Download from https://gdal.org/download.html
 ```
+
+Note: `uncompress` does not link against the GDAL library - it only calls the `gdal_translate` command-line tool when needed. This keeps the binary small and avoids complex build dependencies.
 
 ## Usage
 
