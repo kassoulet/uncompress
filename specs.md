@@ -202,12 +202,34 @@ flate2 = "1.0"
 png = "0.18"
 zip = "8.1.0"
 walkdir = "2"
-tiff = "0.10"
+tiff = { version = "0.11", optional = true, default-features = false, features = ["zstd"] }
 
 [dev-dependencies]
 tempfile = "3"
 assert_cmd = "2"
 predicates = "3"
+```
+
+### Feature Flags
+
+The following Cargo features are available to customize TIFF support:
+
+| Feature | Description |
+|---------|-------------|
+| `tiff-support` (default) | Full TIFF support with all compression formats (ZSTD, WebP, JPEG, LZW, Deflate, FAX) |
+| `tiff-minimal` | Basic TIFF support without compression codecs (smaller binary) |
+
+**Example usage:**
+
+```bash
+# Build with full TIFF support (default)
+cargo build
+
+# Build with minimal TIFF support (smaller binary)
+cargo build --no-default-features --features tiff-minimal
+
+# Build without TIFF support
+cargo build --no-default-features
 ```
 
 ### Building

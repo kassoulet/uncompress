@@ -13,7 +13,8 @@ rust-version = "1.70"
 
 [features]
 default = ["tiff-support"]
-tiff-support = ["dep:tiff"]
+tiff-support = ["dep:tiff", "tiff/zstd", "tiff/webp", "tiff/jpeg", "tiff/lzw", "tiff/deflate", "tiff/fax"]
+tiff-minimal = ["dep:tiff"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
@@ -21,8 +22,7 @@ flate2 = "1.0"
 png = "0.18"
 zip = "8.1.0"
 walkdir = "2"
-tiff = { version = "0.11", optional = true }
-zstd = "0.13"
+tiff = { version = "0.11", optional = true, default-features = false }
 
 [dev-dependencies]
 tempfile = "3"

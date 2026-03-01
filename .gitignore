@@ -42,3 +42,6 @@ criterion/
 tmp/
 temp/
 *.tmp
+
+# Test fixtures (generated)
+tests/fixtures/tiff_compression/output/

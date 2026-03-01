@@ -1,81 +1,152 @@
-The user wants me to create a comprehensive project summary in markdown format based on the conversation history. Let me analyze what happened:
+The user wants me to create a comprehensive project summary in markdown format based on the conversation history. Let me analyze the key points:
 
-1. The user asked to add support for uncompressing TIFFs with GeoTIFF metadata preservation
-2. I explored the codebase and found TIFF support already existed but didn't preserve metadata
-3. I implemented full metadata preservation including GeoTIFF tags
-4. All tests pass and the commit was made
+1. **Project**: `uncompress` - A Rust CLI tool to decompress files for better Git storage
+2. **Key features added during this session**:
+   - Progress output (filename, type, input/output sizes, compression ratio)
+   - Skip already uncompressed files
+   - BigTIFF support
+   - Full TIFF format support (U8, U16 natively; F32, F64, signed/unsigned via gdal_translate)
+   - Optional tiff-support feature
+   - Using gdal_translate CLI instead of gdal crate
 
-Let me create a comprehensive summary following the specified format.# Project Summary
+3. **Technical decisions**:
+   - Use gdal_translate as external tool rather than linking gdal crate
+   - Optional feature flag for TIFF support
+   - Magic byte detection for file types
+
+4. **Build commands**:
+   - `cargo build --release` (with TIFF support)
+   - `cargo build --release --no-default-features` (without TIFF)
+
+5. **File types supported**:
+   - ZIP-based (docx, xlsx, pptx, ipynb)
+   - GZ
+   - PNG
+   - TIFF/GeoTIFF (with various bit depths and compression types)
+
+Let me create a comprehensive summary.# Project Summary
 
 ## Overall Goal
-Add support for uncompressing TIFF and GeoTIFF files while preserving all image metadata, including geospatial tags for GIS applications.
+Enhance the `uncompress` Rust CLI tool with progress output, automatic skip of already-optimized files, and comprehensive TIFF/GeoTIFF format support including all bit depths and compression types.
 
 ## Key Knowledge
 
 ### Technology Stack
 - **Language**: Rust 1.70+
-- **Key Dependencies**: `tiff` (0.11), `png` (0.18), `zip` (8.1.0), `flate2` (1.0), `clap` (4)
-- **Build Commands**: `cargo build`, `cargo build --release`, `cargo test`, `cargo clippy`, `cargo fmt`
+- **Core dependencies**: `clap`, `flate2`, `png`, `zip`, `tiff`, `zstd`
+- **External tool**: `gdal_translate` (for advanced TIFF formats, not linked)
 
-### Architecture
-- **File Type Detection**: Magic byte detection (not file extensions) for ZIP, PNG, GZ, TIFF/GeoTIFF
-- **Processing Pattern**: Read → Preserve metadata → Recompress with optimal settings → Write
-- **Output Strategy**: In-place processing with `.unc.` temp files, or output directory option
+### Architecture Decisions
+- **Optional TIFF support**: Feature flag `tiff-support` (enabled by default)
+  - With TIFF: 3.1 MB binary
+  - Without TIFF: 2.6 MB binary
+- **GDAL integration**: Uses `gdal_translate` CLI tool externally (not the gdal crate)
+  - Avoids complex build dependencies (no pkg-config, no GDAL dev headers)
+  - Keeps binary small and portable
+  - Users install `gdal-bin` only if needed for advanced TIFF formats
 
-### TIFF/GeoTIFF Implementation Details
-- **Metadata Preservation**: Uses `decoder.tag_iter()` to read all IFD tags, `DirectoryEncoder::write_tag()` to preserve them
-- **Supported Formats**: 8-bit and 16-bit images (Grayscale, RGB, RGBA)
-- **Compression**: Uncompressed with horizontal predictor for optimal Git delta storage
-- **Preserved Tags**: All TIFF tags including GeoTIFF geospatial tags (ModelPixelScaleTag 33550, ModelTiepointTag 33922, GeoKeyDirectoryTag 34735, GeoDoubleParamsTag 34736, GeoAsciiParamsTag 34737), EXIF tags, and custom tags
-- **Skipped Tags**: StripOffsets, StripByteCounts, TileOffsets, TileByteCounts, JPEGTables, Compression, Predictor, ImageWidth, ImageLength, BitsPerSample, PhotometricInterpretation, SamplesPerPixel, RowsPerStrip, PlanarConfiguration (rewritten by encoder)
+### File Type Detection
+- Magic byte detection (not file extensions)
+- Supports: ZIP, GZ, PNG, TIFF, BigTIFF
 
-### Testing
-- **Test Suite**: 12 unit tests + 13 integration tests (all passing)
-- **Test Fixtures**: Located in `tests/fixtures/` including TIFF files with correct and wrong extensions
-- **Magic Byte Detection Tests**: Verifies processing works regardless of file extension
+### TIFF Format Support Matrix
+| Bit Depth | Support Method | Color Types |
+|-----------|---------------|-------------|
+| U8 | Native (tiff crate) | Gray8, RGB8, RGBA8 |
+| U16 | Native (tiff crate) | Gray16, RGB16, RGBA16 |
+| F32, F64, F16 | gdal_translate | All |
+| U32, U64 | gdal_translate | All |
+| I8, I16, I32, I64 | gdal_translate | All |
 
-### User Preferences
-- **Output Language**: English for explanations
-- **Code Style**: Follow existing project conventions, minimal comments, idiomatic Rust
-- **Commit Style**: Clear, concise messages focused on "why" with bullet points for details
+| Compression | Support Method |
+|-------------|----------------|
+| Uncompressed | Native |
+| ZSTD, WebP, JPEG, LZW, Deflate | gdal_translate |
+
+### Build Commands
+```bash
+# With TIFF support (default)
+cargo build --release
+
+# Without TIFF support (smaller binary, no external dependencies)
+cargo build --release --no-default-features
+
+# Run tests
+cargo test
+
+# Test without TIFF feature
+cargo test --no-default-features
+```
+
+### Output Format
+```
+filename | TYPE | input_size → output_size | change (ratio%)
+```
 
 ## Recent Actions
 
-### Accomplishments
-1. ✅ **Enhanced TIFF Processing** - Implemented full metadata preservation for TIFF/GeoTIFF files
-2. ✅ **Added Helper Functions** - `write_preserved_tags_8()`, `write_preserved_tags_16()`, `write_tag_value()` for tag preservation
-3. ✅ **Updated Documentation** - README.md, specs.md, Cargo.toml now reflect GeoTIFF metadata support
-4. ✅ **All Tests Pass** - 25 tests passing (12 unit + 13 integration)
-5. ✅ **Committed Changes** - Commit `213e36be` with comprehensive change summary
+### Accomplishments (7 commits)
+1. **f635cce** - Removed gdal crate, use gdal_translate CLI only
+   - Cleaner dependency model
+   - Smaller binary, no build dependencies
 
-### Key Discoveries
-- The `tiff` crate's high-level API requires using `DirectoryEncoder::write_tag()` for custom tag preservation
-- Generic type parameters for `ImageEncoder` and `DirectoryEncoder` require explicit `TiffKindStandard` specification
-- Value enum has 18 variants requiring comprehensive pattern matching for tag preservation
-- Some deprecated variants exist (RationalBig, SRationalBig) but should still be handled
+2. **aa82c16** - Updated README with comprehensive documentation
+   - Features section
+   - GDAL dependency clarification
+   - Output format examples
+   - TIFF format support matrix
 
-### Code Changes
-- **src/main.rs**: Added imports for `tiff::decoder::ifd::Value`, `tiff::encoder::colortype`, `TiffKindStandard`, `Tag`; implemented `process_tiff()` with metadata preservation; added 3 helper functions
-- **README.md**: Added TIFF/GeoTIFF to supported file types table
-- **specs.md**: Created comprehensive specification document with GeoTIFF tag details
-- **Cargo.toml**: Updated description and keywords to include TIFF/GeoTIFF
+3. **b36a800** - Added support for all TIFF bit depths
+   - Native: U8, U16
+   - Via gdal: F32, F64, F16, U32, U64, I8, I16, I32, I64
+
+4. **29bf46a** - Made TIFF support optional via feature flag
+   - `tiff-support` feature (default: enabled)
+   - Conditional compilation for all TIFF code
+
+5. **4e2fb0a** - Handle all TIFF compression types
+   - ZSTD, WebP, JPEG, LZW, Deflate via gdal_translate
+
+6. **f940840** - Added progress output and skip logic
+   - Shows filename, type, sizes, compression ratio
+   - Skips already uncompressed files (TIFF compression=1 + predictor=2, ZIP STORED)
+   - BigTIFF magic byte detection
+
+7. **213e36b** - Preserve GeoTIFF metadata
+   - Full tag preservation during processing
+
+### Test Results
+- With `tiff-support`: 12 unit tests + 13 CLI tests ✓
+- Without `tiff-support`: 10 unit tests + 10 CLI tests ✓
 
 ## Current Plan
 
-1. [DONE] Read all TIFF tags from input file including GeoTIFF metadata
-2. [DONE] Update process_tiff function to preserve all metadata tags
-3. [DONE] Add helper functions to copy tags from decoder to encoder
-4. [DONE] Test with existing TIFF fixtures to verify functionality
-5. [DONE] Update documentation to reflect GeoTIFF metadata support
-6. [DONE] Commit changes with comprehensive message
+### [DONE]
+- [x] Progress output with filename, type, sizes, ratio
+- [x] Skip already uncompressed files
+- [x] BigTIFF support (magic bytes II+0, MM0+)
+- [x] Optional tiff-support feature
+- [x] Full TIFF bit depth support (U8, U16 native; others via gdal)
+- [x] All compression types (ZSTD, WebP, JPEG, LZW, Deflate via gdal)
+- [x] GeoTIFF metadata preservation
+- [x] README documentation update
+- [x] Remove gdal crate dependency (use CLI only)
 
-### Future Considerations
-- [TODO] Consider adding explicit GeoTIFF test fixtures with known geospatial metadata
-- [TODO] Verify metadata preservation with real-world GeoTIFF files from GIS applications
-- [TODO] Consider adding verbose output showing which tags were preserved
-- [TODO] Multi-page TIFF support (currently processes first image only)
+### [TODO]
+- [ ] Consider adding unit tests for TIFF bit depth detection
+- [ ] Add integration test for gdal_translate fallback path
+- [ ] Consider adding `--dry-run` flag to preview changes
+- [ ] Add benchmark comparisons for repository size savings
+- [ ] Publish to crates.io
+
+### Known Limitations
+- Float TIFF (F32, F64, F16) requires gdal_translate installed
+- Signed integer TIFF (I8, I16, I32, I64) requires gdal_translate installed
+- 32/64-bit unsigned TIFF (U32, U64) requires gdal_translate installed
+- Compressed TIFF (ZSTD, WebP, JPEG, LZW, Deflate) requires gdal_translate installed
+- Native tiff encoder only supports U8 and U16 color types
 
 ---
 
 ## Summary Metadata
-**Update time**: 2026-03-01T19:58:30.054Z 
+**Update time**: 2026-03-01T21:39:07.197Z 

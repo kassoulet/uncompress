@@ -128,14 +128,13 @@ fn main() -> ExitCode {
 
     for path in &args.paths {
         if path.is_dir() {
-            let entries: Vec<_> = WalkDir::new(path)
+            let walk = WalkDir::new(path)
                 .max_depth(if args.recursive { usize::MAX } else { 1 })
                 .into_iter()
                 .filter_map(|e| e.ok())
-                .filter(|e| e.file_type().is_file())
-                .collect();
+                .filter(|e| e.file_type().is_file());
 
-            for entry in entries {
+            for entry in walk {
                 if let Err(e) = process_file(entry.path(), args.output.as_ref(), args.verbose) {
                     eprintln!("Error processing {}: {}", entry.path().display(), e);
                     success = false;
@@ -173,8 +172,11 @@ fn is_already_uncompressed(path: &Path, file_type: FileType) -> Result<bool, Box
                                     // Predictor 2 = Horizontal, already optimal
                                     return Ok(pred_val == 2);
                                 }
+                                // Other predictor value, needs processing to set it to 2
+                                return Ok(false);
                             }
-                            return Ok(true); // Uncompressed without checking predictor
+                            // Uncompressed but no predictor tag (default 1), needs processing to set it to 2
+                            return Ok(false);
                         }
                         // All other compression types need processing:
                         // 5=LZW, 6=JPEG, 8=Deflate, 32946=Deflate, 34933=Deflate, 50000=ZSTD, 52546=WebP
@@ -317,23 +319,21 @@ fn process_zip_based(
     let output_file = File::create(output_path)?;
     let mut zip_writer = ZipWriter::new(output_file);
 
-    // Use STORED method (no compression) for all entries
-    let options: FileOptions<'_, ()> =
-        FileOptions::default().compression_method(zip::CompressionMethod::Stored);
-
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i)?;
         let outpath = entry.name().to_string();
 
-        // Skip directories
-        if entry.name().ends_with('/') {
-            continue;
+        let options: FileOptions<'_, ()> = FileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored)
+            .last_modified_time(entry.last_modified().unwrap_or_default())
+            .unix_permissions(entry.unix_mode().unwrap_or(0o644));
+
+        if entry.is_dir() {
+            zip_writer.add_directory(&outpath, options)?;
+        } else {
+            zip_writer.start_file(&outpath, options)?;
+            std::io::copy(&mut entry, &mut zip_writer)?;
         }
-
-        zip_writer.start_file(&outpath, options)?;
-
-        // Stream the entry data directly to the writer (no buffering in memory)
-        std::io::copy(&mut entry, &mut zip_writer)?;
     }
 
     zip_writer.finish()?;
@@ -498,17 +498,17 @@ fn process_tiff(
             if samples == 1 {
                 // Grayscale
                 let mut image_encoder = encoder.new_image::<colortype::Gray8>(width, height)?;
-                write_preserved_tags_8(&mut image_encoder, &preserved_tags)?;
+                write_preserved_tags(&mut image_encoder, &preserved_tags)?;
                 image_encoder.write_data(&data)?;
             } else if samples == 3 {
                 // RGB
                 let mut image_encoder = encoder.new_image::<colortype::RGB8>(width, height)?;
-                write_preserved_tags_8(&mut image_encoder, &preserved_tags)?;
+                write_preserved_tags(&mut image_encoder, &preserved_tags)?;
                 image_encoder.write_data(&data)?;
             } else if samples == 4 {
                 // RGBA
                 let mut image_encoder = encoder.new_image::<colortype::RGBA8>(width, height)?;
-                write_preserved_tags_8(&mut image_encoder, &preserved_tags)?;
+                write_preserved_tags(&mut image_encoder, &preserved_tags)?;
                 image_encoder.write_data(&data)?;
             } else {
                 return process_tiff_with_gdal(path, output_path, verbose, 
@@ -523,15 +523,15 @@ fn process_tiff(
 
             if samples == 1 {
                 let mut image_encoder = encoder.new_image::<colortype::Gray16>(width, height)?;
-                write_preserved_tags_16(&mut image_encoder, &preserved_tags)?;
+                write_preserved_tags(&mut image_encoder, &preserved_tags)?;
                 image_encoder.write_data(&data)?;
             } else if samples == 3 {
                 let mut image_encoder = encoder.new_image::<colortype::RGB16>(width, height)?;
-                write_preserved_tags_16(&mut image_encoder, &preserved_tags)?;
+                write_preserved_tags(&mut image_encoder, &preserved_tags)?;
                 image_encoder.write_data(&data)?;
             } else if samples == 4 {
                 let mut image_encoder = encoder.new_image::<colortype::RGBA16>(width, height)?;
-                write_preserved_tags_16(&mut image_encoder, &preserved_tags)?;
+                write_preserved_tags(&mut image_encoder, &preserved_tags)?;
                 image_encoder.write_data(&data)?;
             } else {
                 return process_tiff_with_gdal(path, output_path, verbose,
@@ -632,21 +632,8 @@ fn process_tiff_with_gdal(
 }
 
 #[cfg(feature = "tiff-support")]
-/// Write preserved tags to the 8-bit image encoder
-fn write_preserved_tags_8<C: colortype::ColorType<Inner = u8>>(
-    image_encoder: &mut tiff::encoder::ImageEncoder<'_, File, C, TiffKindStandard>,
-    preserved_tags: &[(Tag, Value)],
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mut dir = image_encoder.encoder();
-    for (tag, value) in preserved_tags {
-        write_tag_value(&mut dir, *tag, value)?;
-    }
-    Ok(())
-}
-
-#[cfg(feature = "tiff-support")]
-/// Write preserved tags to the 16-bit image encoder
-fn write_preserved_tags_16<C: colortype::ColorType<Inner = u16>>(
+/// Write preserved tags to the image encoder
+fn write_preserved_tags<C: colortype::ColorType>(
     image_encoder: &mut tiff::encoder::ImageEncoder<'_, File, C, TiffKindStandard>,
     preserved_tags: &[(Tag, Value)],
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -767,7 +754,7 @@ fn print_progress(
     file_type: FileType,
     input_size: u64,
     output_size: u64,
-    has_output_dir: bool,
+    _has_output_dir: bool,
 ) {
     let filename = path.file_name()
         .map(|n| n.to_string_lossy())
@@ -794,27 +781,15 @@ fn print_progress(
         0.0
     };
 
-    if has_output_dir {
-        println!(
-            "{} | {} | {} → {} | {} ({:.1}%)",
-            filename,
-            type_str,
-            format_size(input_size),
-            format_size(output_size),
-            size_change,
-            compression_ratio
-        );
-    } else {
-        println!(
-            "{} | {} | {} → {} | {} ({:.1}%)",
-            filename,
-            type_str,
-            format_size(input_size),
-            format_size(output_size),
-            size_change,
-            compression_ratio
-        );
-    }
+    println!(
+        "{} | {} | {} → {} | {} ({:.1}%)",
+        filename,
+        type_str,
+        format_size(input_size),
+        format_size(output_size),
+        size_change,
+        compression_ratio
+    );
 }
 
 /// Format file size in human-readable format
