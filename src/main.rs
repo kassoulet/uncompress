@@ -5,6 +5,7 @@ use png::{Encoder, Filter};
 use std::fs::{self, File};
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use tiff::decoder::ifd::Value;
 use tiff::encoder::colortype;
 use tiff::encoder::{Compression as TiffCompression, Predictor, TiffEncoder, TiffKindStandard};
@@ -23,6 +24,10 @@ const GZ_MAGIC: &[u8] = &[0x1F, 0x8B];
 const TIFF_LE_MAGIC: &[u8] = &[0x49, 0x49, 0x2A, 0x00];
 /// Magic bytes for TIFF big-endian (MM\x00*)
 const TIFF_BE_MAGIC: &[u8] = &[0x4D, 0x4D, 0x00, 0x2A];
+/// Magic bytes for BigTIFF little-endian (II+\x00)
+const BIGTIFF_LE_MAGIC: &[u8] = &[0x49, 0x49, 0x2B, 0x00];
+/// Magic bytes for BigTIFF big-endian (MM\x00+)
+const BIGTIFF_BE_MAGIC: &[u8] = &[0x4D, 0x4D, 0x00, 0x2B];
 
 /// File types detected by magic bytes
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,8 +61,13 @@ fn detect_file_type(path: &Path) -> Option<FileType> {
         return Some(FileType::Gz);
     }
 
-    // Check for TIFF (4 bytes) - both little-endian and big-endian
-    if bytes_read >= 4 && (buffer[..4] == *TIFF_LE_MAGIC || buffer[..4] == *TIFF_BE_MAGIC) {
+    // Check for TIFF (4 bytes) - both little-endian and big-endian, including BigTIFF
+    if bytes_read >= 4
+        && (buffer[..4] == *TIFF_LE_MAGIC
+            || buffer[..4] == *TIFF_BE_MAGIC
+            || buffer[..4] == *BIGTIFF_LE_MAGIC
+            || buffer[..4] == *BIGTIFF_BE_MAGIC)
+    {
         return Some(FileType::Tiff);
     }
 
@@ -124,6 +134,71 @@ fn main() -> ExitCode {
     }
 }
 
+/// Check if a file is already uncompressed
+fn is_already_uncompressed(path: &Path, file_type: FileType) -> Result<bool, Box<dyn std::error::Error>> {
+    match file_type {
+        FileType::Tiff => {
+            // Check TIFF compression tag
+            let decoder = tiff::decoder::Decoder::new(File::open(path)?);
+            if let Ok(mut dec) = decoder {
+                if let Ok(compression) = dec.get_tag(tiff::tags::Tag::Compression) {
+                    if let Ok(comp_val) = compression.into_u16() {
+                        // Compression 1 = Uncompressed, 32946 = Deflate, 50000 = ZSTD
+                        // Skip if already uncompressed (1) or deflate with no predictor
+                        if comp_val == 1 {
+                            // Check predictor - if horizontal predictor is already set, skip
+                            if let Ok(pred) = dec.get_tag(tiff::tags::Tag::Predictor) {
+                                if let Ok(pred_val) = pred.into_u16() {
+                                    // Predictor 2 = Horizontal, already optimal
+                                    return Ok(pred_val == 2);
+                                }
+                            }
+                            return Ok(true); // Uncompressed without checking predictor
+                        }
+                    }
+                }
+            }
+            Ok(false) // Needs processing
+        }
+        FileType::Png => {
+            // PNG files processed by us use Paeth filter and no compression
+            // We can't easily detect this without re-reading, so always process
+            // to ensure optimal compression
+            Ok(false)
+        }
+        FileType::Gz => {
+            // Check GZ compression level from header
+            // GZ header: magic(2) + compression(1) + flags(1) + mtime(4) + xfl(1) + os(1)
+            let mut file = File::open(path)?;
+            let mut header = [0u8; 10];
+            if file.read_exact(&mut header).is_ok() {
+                // XFL byte (index 8): 2 = max compression, 4 = fastest compression
+                // We can't detect level 0 (no compression) reliably from header alone
+                // So we always process to ensure optimal compression
+            }
+            Ok(false)
+        }
+        FileType::Zip => {
+            // Check if all entries in ZIP use STORED method (no compression)
+            let input_file = File::open(path)?;
+            if let Ok(mut archive) = zip::ZipArchive::new(input_file) {
+                for i in 0..archive.len() {
+                    if let Ok(entry) = archive.by_index(i) {
+                        if !entry.name().ends_with('/') {
+                            // Check if any entry uses compression
+                            if entry.compression() != zip::CompressionMethod::Stored {
+                                return Ok(false); // Has compressed entries, needs processing
+                            }
+                        }
+                    }
+                }
+                return Ok(true); // All entries are stored (uncompressed)
+            }
+            Ok(false)
+        }
+    }
+}
+
 fn process_file(
     path: &Path,
     output_dir: Option<&PathBuf>,
@@ -133,12 +208,32 @@ fn process_file(
     let file_type = match detect_file_type(path) {
         Some(ft) => ft,
         None => {
-            if verbose {
-                println!("Skipping unsupported file type: {}", path.display());
-            }
+            println!("{} | UNSUPPORTED | Skipped", 
+                path.file_name()
+                    .map(|n| n.to_string_lossy())
+                    .unwrap_or_else(|| path.display().to_string().into()));
             return Ok(());
         }
     };
+
+    // Check if file is already uncompressed
+    if is_already_uncompressed(path, file_type)? {
+        println!("{} | {} | Already uncompressed | Skipped", 
+            path.file_name()
+                .map(|n| n.to_string_lossy())
+                .unwrap_or_else(|| path.display().to_string().into()),
+            match file_type {
+                FileType::Zip => "ZIP",
+                FileType::Gz => "GZ",
+                FileType::Png => "PNG",
+                FileType::Tiff => "TIFF",
+            }
+        );
+        return Ok(());
+    }
+
+    // Get input file size before processing
+    let input_size = fs::metadata(path)?.len();
 
     let output_path = determine_output_path(path, output_dir)?;
 
@@ -157,6 +252,9 @@ fn process_file(
         return Err(e);
     }
 
+    // Get output file size after processing
+    let output_size = fs::metadata(&output_path)?.len();
+
     // If processing in-place (no output dir), rename temp file to original
     if output_dir.is_none() && output_path != path {
         if let Err(e) = fs::rename(&output_path, path) {
@@ -172,6 +270,9 @@ fn process_file(
     } else if verbose {
         println!("Processed: {} -> {}", path.display(), output_path.display());
     }
+
+    // Print progress information
+    print_progress(path, &output_path, file_type, input_size, output_size, output_dir.is_some());
 
     Ok(())
 }
@@ -285,15 +386,36 @@ fn process_png(
 /// Process TIFF files (including GeoTIFF)
 /// Recompress with no compression and horizontal predictor
 /// Preserves all TIFF tags including GeoTIFF metadata
+/// For ZSTD-compressed files, uses gdal as external tool
 fn process_tiff(
     path: &Path,
     output_path: &Path,
     verbose: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Read the TIFF file
-    let mut decoder = tiff::decoder::Decoder::new(File::open(path)?)?;
+    // Try to read the TIFF file to check compression
+    let decoder_result = tiff::decoder::Decoder::new(File::open(path)?);
+    
+    let mut decoder = match decoder_result {
+        Ok(d) => d,
+        Err(e) => {
+            // If decoder fails, try using gdal for zstd-compressed files
+            let err_str = e.to_string().to_lowercase();
+            if err_str.contains("limits") || err_str.contains("compression") || err_str.contains("zstd") {
+                return process_tiff_with_gdal(path, output_path, verbose);
+            }
+            return Err(e.into());
+        }
+    };
 
-    // Get image information
+    // Get image information - this may also fail for unsupported compression
+    let dimensions_result = decoder.dimensions();
+    if dimensions_result.is_err() {
+        let err_str = dimensions_result.unwrap_err().to_string().to_lowercase();
+        if err_str.contains("limits") || err_str.contains("compression") || err_str.contains("zstd") {
+            return process_tiff_with_gdal(path, output_path, verbose);
+        }
+    }
+    
     let width = decoder.dimensions()?.0;
     let height = decoder.dimensions()?.1;
     let photometric_interpretation: u16 = decoder
@@ -330,8 +452,17 @@ fn process_tiff(
         }
     }
 
-    // Read the image data
-    let image = decoder.read_image()?;
+    // Read the image data - this may fail for unsupported compression like zstd
+    let image = match decoder.read_image() {
+        Ok(img) => img,
+        Err(e) => {
+            let err_str = e.to_string().to_lowercase();
+            if err_str.contains("limits") || err_str.contains("compression") || err_str.contains("zstd") {
+                return process_tiff_with_gdal(path, output_path, verbose);
+            }
+            return Err(e.into());
+        }
+    };
 
     // Create output TIFF with no compression and predictor
     let mut encoder = TiffEncoder::new(File::create(output_path)?)?
@@ -400,6 +531,46 @@ fn process_tiff(
         println!(
             "TIFF: {}x{}, photometric={}, {} tags preserved, uncompressed with horizontal predictor",
             width, height, photometric_interpretation, preserved_tags.len()
+        );
+    }
+
+    Ok(())
+}
+
+/// Process TIFF files using gdal (for zstd-compressed or other unsupported formats)
+/// Uses gdal_translate to convert to uncompressed TIFF with horizontal predictor
+fn process_tiff_with_gdal(
+    path: &Path,
+    output_path: &Path,
+    verbose: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Check if gdal_translate is available
+    let gdal_check = Command::new("gdal_translate").arg("--version").output();
+    
+    if gdal_check.is_err() || !gdal_check.as_ref().unwrap().status.success() {
+        return Err("gdal_translate not found. Install GDAL tools to process zstd-compressed TIFFs.".into());
+    }
+
+    // Use gdal_translate to convert to uncompressed TIFF
+    // -co COMPRESS=NONE: No compression
+    // -co PREDICTOR=2: Horizontal predictor
+    let output = Command::new("gdal_translate")
+        .arg("-co")
+        .arg("COMPRESS=NONE")
+        .arg("-co")
+        .arg("PREDICTOR=2")
+        .arg(path)
+        .arg(output_path)
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("gdal_translate failed: {}", stderr).into());
+    }
+
+    if verbose {
+        println!(
+            "TIFF: processed with gdal_translate (zstd or unsupported compression)"
         );
     }
 
@@ -529,6 +700,79 @@ fn determine_output_path(
         let parent = input_path.parent().unwrap_or(Path::new(""));
         let temp_name = format!(".unc.{}", file_name.to_string_lossy());
         Ok(parent.join(temp_name))
+    }
+}
+
+/// Print progress information for processed files
+fn print_progress(
+    path: &Path,
+    _output_path: &Path,
+    file_type: FileType,
+    input_size: u64,
+    output_size: u64,
+    has_output_dir: bool,
+) {
+    let filename = path.file_name()
+        .map(|n| n.to_string_lossy())
+        .unwrap_or_else(|| path.display().to_string().into());
+    
+    let type_str = match file_type {
+        FileType::Zip => "ZIP",
+        FileType::Gz => "GZ",
+        FileType::Png => "PNG",
+        FileType::Tiff => "TIFF",
+    };
+
+    let size_diff = output_size as i64 - input_size as i64;
+    let size_change = if size_diff >= 0 {
+        format!("+{}", format_size(size_diff as u64))
+    } else {
+        format!("-{}", format_size((-size_diff) as u64))
+    };
+
+    let compression_ratio = if input_size > 0 {
+        (output_size as f64 / input_size as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    if has_output_dir {
+        println!(
+            "{} | {} | {} → {} | {} ({:.1}%)",
+            filename,
+            type_str,
+            format_size(input_size),
+            format_size(output_size),
+            size_change,
+            compression_ratio
+        );
+    } else {
+        println!(
+            "{} | {} | {} → {} | {} ({:.1}%)",
+            filename,
+            type_str,
+            format_size(input_size),
+            format_size(output_size),
+            size_change,
+            compression_ratio
+        );
+    }
+}
+
+/// Format file size in human-readable format
+fn format_size(size: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+
+    if size >= GB {
+        format!("{:.2} GB", size as f64 / GB as f64)
+    } else if size >= MB {
+        format!("{:.2} MB", size as f64 / MB as f64)
+    } else if size >= KB {
+        format!("{:.2} KB", size as f64 / KB as f64)
+    } else {
+        format!("{} B", size)
     }
 }
 

@@ -951,6 +951,7 @@ dependencies = [
  "tiff",
  "walkdir",
  "zip",
+ "zstd",
 ]
 
 [[package]]
