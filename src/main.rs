@@ -5,14 +5,24 @@ use png::{Encoder, Filter};
 use std::fs::{self, File};
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use tiff::decoder::ifd::Value;
-use tiff::encoder::colortype;
-use tiff::encoder::{Compression as TiffCompression, Predictor, TiffEncoder, TiffKindStandard};
-use tiff::tags::Tag;
 use walkdir::WalkDir;
 use zip::write::FileOptions;
 use zip::ZipWriter;
+
+#[cfg(feature = "tiff-support")]
+use std::process::Command;
+
+#[cfg(feature = "tiff-support")]
+use tiff::decoder::ifd::Value;
+
+#[cfg(feature = "tiff-support")]
+use tiff::encoder::colortype;
+
+#[cfg(feature = "tiff-support")]
+use tiff::encoder::{Compression as TiffCompression, Predictor, TiffEncoder, TiffKindStandard};
+
+#[cfg(feature = "tiff-support")]
+use tiff::tags::Tag;
 
 /// Magic bytes for ZIP files (PK\x03\x04)
 const ZIP_MAGIC: &[u8] = &[0x50, 0x4B, 0x03, 0x04];
@@ -20,12 +30,20 @@ const ZIP_MAGIC: &[u8] = &[0x50, 0x4B, 0x03, 0x04];
 const PNG_MAGIC: &[u8] = &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
 /// Magic bytes for GZ files (\x1f\x8b)
 const GZ_MAGIC: &[u8] = &[0x1F, 0x8B];
+
+#[cfg(feature = "tiff-support")]
 /// Magic bytes for TIFF little-endian (II*\x00)
 const TIFF_LE_MAGIC: &[u8] = &[0x49, 0x49, 0x2A, 0x00];
+
+#[cfg(feature = "tiff-support")]
 /// Magic bytes for TIFF big-endian (MM\x00*)
 const TIFF_BE_MAGIC: &[u8] = &[0x4D, 0x4D, 0x00, 0x2A];
+
+#[cfg(feature = "tiff-support")]
 /// Magic bytes for BigTIFF little-endian (II+\x00)
 const BIGTIFF_LE_MAGIC: &[u8] = &[0x49, 0x49, 0x2B, 0x00];
+
+#[cfg(feature = "tiff-support")]
 /// Magic bytes for BigTIFF big-endian (MM\x00+)
 const BIGTIFF_BE_MAGIC: &[u8] = &[0x4D, 0x4D, 0x00, 0x2B];
 
@@ -35,6 +53,7 @@ enum FileType {
     Zip,
     Gz,
     Png,
+    #[cfg(feature = "tiff-support")]
     Tiff,
 }
 
@@ -61,6 +80,7 @@ fn detect_file_type(path: &Path) -> Option<FileType> {
         return Some(FileType::Gz);
     }
 
+    #[cfg(feature = "tiff-support")]
     // Check for TIFF (4 bytes) - both little-endian and big-endian, including BigTIFF
     if bytes_read >= 4
         && (buffer[..4] == *TIFF_LE_MAGIC
@@ -137,6 +157,7 @@ fn main() -> ExitCode {
 /// Check if a file is already uncompressed
 fn is_already_uncompressed(path: &Path, file_type: FileType) -> Result<bool, Box<dyn std::error::Error>> {
     match file_type {
+        #[cfg(feature = "tiff-support")]
         FileType::Tiff => {
             // Check TIFF compression tag
             // Compression codes: 1=Uncompressed, 5=LZW, 6=JPEG, 8=Deflate, 32946=Deflate, 34933=Deflate, 50000=ZSTD, 52546=WebP
@@ -221,7 +242,7 @@ fn process_file(
 
     // Check if file is already uncompressed
     if is_already_uncompressed(path, file_type)? {
-        println!("{} | {} | Already uncompressed | Skipped", 
+        println!("{} | {} | Already uncompressed | Skipped",
             path.file_name()
                 .map(|n| n.to_string_lossy())
                 .unwrap_or_else(|| path.display().to_string().into()),
@@ -229,6 +250,7 @@ fn process_file(
                 FileType::Zip => "ZIP",
                 FileType::Gz => "GZ",
                 FileType::Png => "PNG",
+                #[cfg(feature = "tiff-support")]
                 FileType::Tiff => "TIFF",
             }
         );
@@ -244,6 +266,7 @@ fn process_file(
         FileType::Png => process_png(path, &output_path, verbose),
         FileType::Gz => process_gz(path, &output_path, verbose),
         FileType::Zip => process_zip_based(path, &output_path, verbose),
+        #[cfg(feature = "tiff-support")]
         FileType::Tiff => process_tiff(path, &output_path, verbose),
     };
 
@@ -386,6 +409,7 @@ fn process_png(
     Ok(())
 }
 
+#[cfg(feature = "tiff-support")]
 /// Process TIFF files (including GeoTIFF)
 /// Recompress with no compression and horizontal predictor
 /// Preserves all TIFF tags including GeoTIFF metadata
@@ -397,7 +421,7 @@ fn process_tiff(
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Try to read the TIFF file to check compression
     let decoder_result = tiff::decoder::Decoder::new(File::open(path)?);
-    
+
     let mut decoder = match decoder_result {
         Ok(d) => d,
         Err(e) => {
@@ -529,6 +553,7 @@ fn process_tiff(
     Ok(())
 }
 
+#[cfg(feature = "tiff-support")]
 /// Process TIFF files using gdal (for zstd, webp, jpeg, lzw, deflate or other unsupported formats)
 /// Uses gdal_translate to convert to uncompressed TIFF with horizontal predictor
 fn process_tiff_with_gdal(
@@ -539,7 +564,7 @@ fn process_tiff_with_gdal(
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Check if gdal_translate is available
     let gdal_check = Command::new("gdal_translate").arg("--version").output();
-    
+
     if gdal_check.is_err() || !gdal_check.as_ref().unwrap().status.success() {
         return Err(format!("gdal_translate not found. Install GDAL tools to process this TIFF. Error: {}", error_msg).into());
     }
@@ -570,6 +595,7 @@ fn process_tiff_with_gdal(
     Ok(())
 }
 
+#[cfg(feature = "tiff-support")]
 /// Write preserved tags to the 8-bit image encoder
 fn write_preserved_tags_8<C: colortype::ColorType<Inner = u8>>(
     image_encoder: &mut tiff::encoder::ImageEncoder<'_, File, C, TiffKindStandard>,
@@ -582,6 +608,7 @@ fn write_preserved_tags_8<C: colortype::ColorType<Inner = u8>>(
     Ok(())
 }
 
+#[cfg(feature = "tiff-support")]
 /// Write preserved tags to the 16-bit image encoder
 fn write_preserved_tags_16<C: colortype::ColorType<Inner = u16>>(
     image_encoder: &mut tiff::encoder::ImageEncoder<'_, File, C, TiffKindStandard>,
@@ -594,6 +621,7 @@ fn write_preserved_tags_16<C: colortype::ColorType<Inner = u16>>(
     Ok(())
 }
 
+#[cfg(feature = "tiff-support")]
 /// Write a single tag value to the directory encoder
 fn write_tag_value(
     dir: &mut tiff::encoder::DirectoryEncoder<'_, File, TiffKindStandard>,
@@ -708,11 +736,12 @@ fn print_progress(
     let filename = path.file_name()
         .map(|n| n.to_string_lossy())
         .unwrap_or_else(|| path.display().to_string().into());
-    
+
     let type_str = match file_type {
         FileType::Zip => "ZIP",
         FileType::Gz => "GZ",
         FileType::Png => "PNG",
+        #[cfg(feature = "tiff-support")]
         FileType::Tiff => "TIFF",
     };
 
@@ -910,6 +939,7 @@ mod tests {
         assert_eq!(detected, Some(FileType::Gz));
     }
 
+    #[cfg(feature = "tiff-support")]
     #[test]
     fn test_detect_file_type_tiff() {
         let temp_dir = TempDir::new().unwrap();
@@ -923,6 +953,7 @@ mod tests {
         assert_eq!(detected, Some(FileType::Tiff));
     }
 
+    #[cfg(feature = "tiff-support")]
     #[test]
     fn test_detect_file_type_tiff_wrong_extension() {
         let temp_dir = TempDir::new().unwrap();
@@ -1011,6 +1042,7 @@ mod tests {
         writer.finish().unwrap();
     }
 
+    #[cfg(feature = "tiff-support")]
     /// Helper function to create a minimal valid TIFF file
     fn create_minimal_tiff(path: &Path) {
         use tiff::encoder::colortype::RGB8;

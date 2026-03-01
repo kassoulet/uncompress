@@ -27,14 +27,17 @@ fn main() {
     // Generate test GZ file with wrong extension
     generate_test_gz(fixtures_dir.join("test.data"));
 
-    // Generate test TIFF file (RGB)
-    generate_test_tiff_rgb(fixtures_dir.join("test.tiff"));
+    #[cfg(feature = "tiff-support")]
+    {
+        // Generate test TIFF file (RGB)
+        generate_test_tiff_rgb(fixtures_dir.join("test.tiff"));
 
-    // Generate test TIFF file with wrong extension
-    generate_test_tiff_rgb(fixtures_dir.join("test.tif_data"));
+        // Generate test TIFF file with wrong extension
+        generate_test_tiff_rgb(fixtures_dir.join("test.tif_data"));
 
-    // Generate test TIFF file (grayscale)
-    generate_test_tiff_gray(fixtures_dir.join("test_gray.tiff"));
+        // Generate test TIFF file (grayscale)
+        generate_test_tiff_gray(fixtures_dir.join("test_gray.tiff"));
+    }
 
     println!("Test fixtures generated successfully in {:?}", fixtures_dir);
 }
@@ -115,6 +118,7 @@ fn generate_test_gz(path: PathBuf) {
     println!("Created: {:?}", path);
 }
 
+#[cfg(feature = "tiff-support")]
 fn generate_test_tiff_rgb(path: PathBuf) {
     use tiff::encoder::colortype::RGB8;
     use tiff::encoder::TiffEncoder;
@@ -139,6 +143,7 @@ fn generate_test_tiff_rgb(path: PathBuf) {
     println!("Created: {:?}", path);
 }
 
+#[cfg(feature = "tiff-support")]
 fn generate_test_tiff_gray(path: PathBuf) {
     use tiff::encoder::colortype::Gray8;
     use tiff::encoder::TiffEncoder;

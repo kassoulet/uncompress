@@ -11,13 +11,18 @@ keywords = ["compression", "git", "zip", "png", "tiff", "geotiff", "optimization
 categories = ["compression", "command-line-utilities"]
 rust-version = "1.70"
 
+[features]
+default = ["tiff-support"]
+tiff-support = ["dep:tiff", "dep:gdal"]
+
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 flate2 = "1.0"
 png = "0.18"
 zip = "8.1.0"
 walkdir = "2"
-tiff = "0.11"
+tiff = { version = "0.11", optional = true }
+gdal = { version = "0.18", optional = true }
 zstd = "0.13"
 
 [dev-dependencies]

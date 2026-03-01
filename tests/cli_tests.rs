@@ -163,6 +163,7 @@ fn test_process_gz_with_wrong_extension() {
 
 /// Test processing a directory with mixed files
 #[test]
+#[cfg(feature = "tiff-support")]
 fn test_process_directory_recursive() {
     let temp_dir = TempDir::new().unwrap();
     let fixtures = fixtures_dir();
@@ -190,6 +191,7 @@ fn test_process_directory_recursive() {
 
 /// Test processing a TIFF file with correct extension
 #[test]
+#[cfg(feature = "tiff-support")]
 fn test_process_tiff_with_correct_extension() {
     let temp_dir = TempDir::new().unwrap();
     let input_file = fixtures_dir().join("test.tiff");
@@ -210,6 +212,7 @@ fn test_process_tiff_with_correct_extension() {
 
 /// Test processing a TIFF file with WRONG extension (tests magic byte detection)
 #[test]
+#[cfg(feature = "tiff-support")]
 fn test_process_tiff_with_wrong_extension() {
     let temp_dir = TempDir::new().unwrap();
     // test.tif_data has TIFF magic bytes but wrong extension
