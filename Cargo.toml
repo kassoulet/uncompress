@@ -2,12 +2,12 @@
 name = "uncompress"
 version = "0.1.0"
 edition = "2021"
-description = "Decompress files (zip, gz, png) for better git storage over time of mutable files"
+description = "Decompress files (zip, gz, png, tiff/geotiff) for better git storage over time of mutable files"
 authors = ["Gautier <gautier@soundconverter.org>"]
 repository = "https://github.com/kassoulet/uncompress"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
-keywords = ["compression", "git", "zip", "png", "optimization"]
+keywords = ["compression", "git", "zip", "png", "tiff", "geotiff", "optimization"]
 categories = ["compression", "command-line-utilities"]
 rust-version = "1.70"
 

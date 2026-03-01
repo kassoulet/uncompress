@@ -35,9 +35,7 @@ fn test_missing_file() {
     let mut cmd = assert_cmd::Command::cargo_bin("uncompress").unwrap();
     // The program should handle missing files gracefully (skip them)
     // We just verify it doesn't crash
-    cmd.arg("/nonexistent/file.zip")
-        .assert()
-        .success();
+    cmd.arg("/nonexistent/file.zip").assert().success();
 }
 
 /// Test processing a ZIP file with correct extension
@@ -235,11 +233,11 @@ fn test_process_tiff_with_wrong_extension() {
 #[test]
 fn test_unsupported_file_types_skipped() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     // Create a text file (unsupported)
     let txt_file = temp_dir.path().join("unsupported.txt");
     std::fs::write(&txt_file, "This is not a supported format").unwrap();
-    
+
     let output_dir = temp_dir.path().join("output");
 
     let mut cmd = assert_cmd::Command::cargo_bin("uncompress").unwrap();

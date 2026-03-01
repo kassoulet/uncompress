@@ -83,6 +83,7 @@ Options:
 | `.zip` | ZIP archive | STORED (no compression) |
 | `.gz` | GZIP compressed | Zero compression level |
 | `.png` | PNG image | Paeth filter, minimal compression |
+| `.tiff`, `.tif` | TIFF/GeoTIFF image | Uncompressed with horizontal predictor, **full metadata preservation** |
 
 ## Use Cases
 
