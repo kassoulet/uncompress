@@ -139,12 +139,12 @@ fn is_already_uncompressed(path: &Path, file_type: FileType) -> Result<bool, Box
     match file_type {
         FileType::Tiff => {
             // Check TIFF compression tag
+            // Compression codes: 1=Uncompressed, 5=LZW, 6=JPEG, 8=Deflate, 32946=Deflate, 34933=Deflate, 50000=ZSTD, 52546=WebP
             let decoder = tiff::decoder::Decoder::new(File::open(path)?);
             if let Ok(mut dec) = decoder {
                 if let Ok(compression) = dec.get_tag(tiff::tags::Tag::Compression) {
                     if let Ok(comp_val) = compression.into_u16() {
-                        // Compression 1 = Uncompressed, 32946 = Deflate, 50000 = ZSTD
-                        // Skip if already uncompressed (1) or deflate with no predictor
+                        // Only skip if already uncompressed (1) with horizontal predictor (2)
                         if comp_val == 1 {
                             // Check predictor - if horizontal predictor is already set, skip
                             if let Ok(pred) = dec.get_tag(tiff::tags::Tag::Predictor) {
@@ -155,6 +155,9 @@ fn is_already_uncompressed(path: &Path, file_type: FileType) -> Result<bool, Box
                             }
                             return Ok(true); // Uncompressed without checking predictor
                         }
+                        // All other compression types need processing:
+                        // 5=LZW, 6=JPEG, 8=Deflate, 32946=Deflate, 34933=Deflate, 50000=ZSTD, 52546=WebP
+                        return Ok(false);
                     }
                 }
             }
@@ -386,7 +389,7 @@ fn process_png(
 /// Process TIFF files (including GeoTIFF)
 /// Recompress with no compression and horizontal predictor
 /// Preserves all TIFF tags including GeoTIFF metadata
-/// For ZSTD-compressed files, uses gdal as external tool
+/// For unsupported compression (ZSTD, WebP, JPEG, etc.), uses gdal as external tool
 fn process_tiff(
     path: &Path,
     output_path: &Path,
@@ -398,22 +401,15 @@ fn process_tiff(
     let mut decoder = match decoder_result {
         Ok(d) => d,
         Err(e) => {
-            // If decoder fails, try using gdal for zstd-compressed files
-            let err_str = e.to_string().to_lowercase();
-            if err_str.contains("limits") || err_str.contains("compression") || err_str.contains("zstd") {
-                return process_tiff_with_gdal(path, output_path, verbose);
-            }
-            return Err(e.into());
+            // If decoder fails, try using gdal for unsupported compression
+            return process_tiff_with_gdal(path, output_path, verbose, e.to_string());
         }
     };
 
     // Get image information - this may also fail for unsupported compression
     let dimensions_result = decoder.dimensions();
     if dimensions_result.is_err() {
-        let err_str = dimensions_result.unwrap_err().to_string().to_lowercase();
-        if err_str.contains("limits") || err_str.contains("compression") || err_str.contains("zstd") {
-            return process_tiff_with_gdal(path, output_path, verbose);
-        }
+        return process_tiff_with_gdal(path, output_path, verbose, dimensions_result.unwrap_err().to_string());
     }
     
     let width = decoder.dimensions()?.0;
@@ -456,11 +452,7 @@ fn process_tiff(
     let image = match decoder.read_image() {
         Ok(img) => img,
         Err(e) => {
-            let err_str = e.to_string().to_lowercase();
-            if err_str.contains("limits") || err_str.contains("compression") || err_str.contains("zstd") {
-                return process_tiff_with_gdal(path, output_path, verbose);
-            }
-            return Err(e.into());
+            return process_tiff_with_gdal(path, output_path, verbose, e.to_string());
         }
     };
 
@@ -537,18 +529,19 @@ fn process_tiff(
     Ok(())
 }
 
-/// Process TIFF files using gdal (for zstd-compressed or other unsupported formats)
+/// Process TIFF files using gdal (for zstd, webp, jpeg, lzw, deflate or other unsupported formats)
 /// Uses gdal_translate to convert to uncompressed TIFF with horizontal predictor
 fn process_tiff_with_gdal(
     path: &Path,
     output_path: &Path,
     verbose: bool,
+    error_msg: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Check if gdal_translate is available
     let gdal_check = Command::new("gdal_translate").arg("--version").output();
     
     if gdal_check.is_err() || !gdal_check.as_ref().unwrap().status.success() {
-        return Err("gdal_translate not found. Install GDAL tools to process zstd-compressed TIFFs.".into());
+        return Err(format!("gdal_translate not found. Install GDAL tools to process this TIFF. Error: {}", error_msg).into());
     }
 
     // Use gdal_translate to convert to uncompressed TIFF
