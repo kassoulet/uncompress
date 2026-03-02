@@ -154,7 +154,10 @@ fn main() -> ExitCode {
 }
 
 /// Check if a file is already uncompressed
-fn is_already_uncompressed(path: &Path, file_type: FileType) -> Result<bool, Box<dyn std::error::Error>> {
+fn is_already_uncompressed(
+    path: &Path,
+    file_type: FileType,
+) -> Result<bool, Box<dyn std::error::Error>> {
     match file_type {
         #[cfg(feature = "tiff-support")]
         FileType::Tiff => {
@@ -234,17 +237,20 @@ fn process_file(
     let file_type = match detect_file_type(path) {
         Some(ft) => ft,
         None => {
-            println!("{} | UNSUPPORTED | Skipped", 
+            println!(
+                "{} | UNSUPPORTED | Skipped",
                 path.file_name()
                     .map(|n| n.to_string_lossy())
-                    .unwrap_or_else(|| path.display().to_string().into()));
+                    .unwrap_or_else(|| path.display().to_string().into())
+            );
             return Ok(());
         }
     };
 
     // Check if file is already uncompressed
     if is_already_uncompressed(path, file_type)? {
-        println!("{} | {} | Already uncompressed | Skipped",
+        println!(
+            "{} | {} | Already uncompressed | Skipped",
             path.file_name()
                 .map(|n| n.to_string_lossy())
                 .unwrap_or_else(|| path.display().to_string().into()),
@@ -300,7 +306,14 @@ fn process_file(
     }
 
     // Print progress information
-    print_progress(path, &output_path, file_type, input_size, output_size, output_dir.is_some());
+    print_progress(
+        path,
+        &output_path,
+        file_type,
+        input_size,
+        output_size,
+        output_dir.is_some(),
+    );
 
     Ok(())
 }
@@ -433,9 +446,14 @@ fn process_tiff(
     // Get image information - this may also fail for unsupported compression
     let dimensions_result = decoder.dimensions();
     if dimensions_result.is_err() {
-        return process_tiff_with_gdal(path, output_path, verbose, dimensions_result.unwrap_err().to_string());
+        return process_tiff_with_gdal(
+            path,
+            output_path,
+            verbose,
+            dimensions_result.unwrap_err().to_string(),
+        );
     }
-    
+
     let width = decoder.dimensions()?.0;
     let height = decoder.dimensions()?.1;
     let photometric_interpretation: u16 = decoder
@@ -444,7 +462,7 @@ fn process_tiff(
 
     // Read all tags from the input file for preservation (including GeoTIFF tags)
     let mut preserved_tags: Vec<(Tag, Value)> = Vec::new();
-    
+
     // Use tag_iter to read all tags from the current IFD
     for result in decoder.tag_iter() {
         if let Ok((tag, value)) = result {
@@ -511,8 +529,12 @@ fn process_tiff(
                 write_preserved_tags(&mut image_encoder, &preserved_tags)?;
                 image_encoder.write_data(&data)?;
             } else {
-                return process_tiff_with_gdal(path, output_path, verbose, 
-                    format!("Unsupported number of samples for 8-bit TIFF: {}", samples));
+                return process_tiff_with_gdal(
+                    path,
+                    output_path,
+                    verbose,
+                    format!("Unsupported number of samples for 8-bit TIFF: {}", samples),
+                );
             }
         }
         tiff::decoder::DecodingResult::U16(data) => {
@@ -534,47 +556,87 @@ fn process_tiff(
                 write_preserved_tags(&mut image_encoder, &preserved_tags)?;
                 image_encoder.write_data(&data)?;
             } else {
-                return process_tiff_with_gdal(path, output_path, verbose,
-                    format!("Unsupported number of samples for 16-bit TIFF: {}", samples));
+                return process_tiff_with_gdal(
+                    path,
+                    output_path,
+                    verbose,
+                    format!("Unsupported number of samples for 16-bit TIFF: {}", samples),
+                );
             }
         }
         // For all other bit depths, use gdal which has full format support
         tiff::decoder::DecodingResult::U32(_) => {
-            return process_tiff_with_gdal(path, output_path, verbose, 
-                "32-bit integer TIFF requires gdal".to_string());
+            return process_tiff_with_gdal(
+                path,
+                output_path,
+                verbose,
+                "32-bit integer TIFF requires gdal".to_string(),
+            );
         }
         tiff::decoder::DecodingResult::U64(_) => {
-            return process_tiff_with_gdal(path, output_path, verbose,
-                "64-bit integer TIFF requires gdal".to_string());
+            return process_tiff_with_gdal(
+                path,
+                output_path,
+                verbose,
+                "64-bit integer TIFF requires gdal".to_string(),
+            );
         }
         tiff::decoder::DecodingResult::I8(_) => {
-            return process_tiff_with_gdal(path, output_path, verbose,
-                "Signed 8-bit TIFF requires gdal".to_string());
+            return process_tiff_with_gdal(
+                path,
+                output_path,
+                verbose,
+                "Signed 8-bit TIFF requires gdal".to_string(),
+            );
         }
         tiff::decoder::DecodingResult::I16(_) => {
-            return process_tiff_with_gdal(path, output_path, verbose,
-                "Signed 16-bit TIFF requires gdal".to_string());
+            return process_tiff_with_gdal(
+                path,
+                output_path,
+                verbose,
+                "Signed 16-bit TIFF requires gdal".to_string(),
+            );
         }
         tiff::decoder::DecodingResult::I32(_) => {
-            return process_tiff_with_gdal(path, output_path, verbose,
-                "Signed 32-bit integer TIFF requires gdal".to_string());
+            return process_tiff_with_gdal(
+                path,
+                output_path,
+                verbose,
+                "Signed 32-bit integer TIFF requires gdal".to_string(),
+            );
         }
         tiff::decoder::DecodingResult::I64(_) => {
-            return process_tiff_with_gdal(path, output_path, verbose,
-                "Signed 64-bit integer TIFF requires gdal".to_string());
+            return process_tiff_with_gdal(
+                path,
+                output_path,
+                verbose,
+                "Signed 64-bit integer TIFF requires gdal".to_string(),
+            );
         }
         tiff::decoder::DecodingResult::F32(_) => {
-            return process_tiff_with_gdal(path, output_path, verbose,
-                "32-bit float TIFF requires gdal".to_string());
+            return process_tiff_with_gdal(
+                path,
+                output_path,
+                verbose,
+                "32-bit float TIFF requires gdal".to_string(),
+            );
         }
         tiff::decoder::DecodingResult::F64(_) => {
-            return process_tiff_with_gdal(path, output_path, verbose,
-                "64-bit float TIFF requires gdal".to_string());
+            return process_tiff_with_gdal(
+                path,
+                output_path,
+                verbose,
+                "64-bit float TIFF requires gdal".to_string(),
+            );
         }
         #[cfg(feature = "tiff-support")]
         tiff::decoder::DecodingResult::F16(_) => {
-            return process_tiff_with_gdal(path, output_path, verbose,
-                "16-bit float TIFF requires gdal".to_string());
+            return process_tiff_with_gdal(
+                path,
+                output_path,
+                verbose,
+                "16-bit float TIFF requires gdal".to_string(),
+            );
         }
     }
 
@@ -602,7 +664,11 @@ fn process_tiff_with_gdal(
     let gdal_check = Command::new("gdal_translate").arg("--version").output();
 
     if gdal_check.is_err() || !gdal_check.as_ref().unwrap().status.success() {
-        return Err(format!("gdal_translate not found. Install GDAL tools to process this TIFF. Error: {}", error_msg).into());
+        return Err(format!(
+            "gdal_translate not found. Install GDAL tools to process this TIFF. Error: {}",
+            error_msg
+        )
+        .into());
     }
 
     // Use gdal_translate to convert to uncompressed TIFF
@@ -623,9 +689,7 @@ fn process_tiff_with_gdal(
     }
 
     if verbose {
-        println!(
-            "TIFF: processed with gdal_translate (zstd or unsupported compression)"
-        );
+        println!("TIFF: processed with gdal_translate (zstd or unsupported compression)");
     }
 
     Ok(())
@@ -653,67 +717,108 @@ fn write_tag_value(
 ) -> Result<(), Box<dyn std::error::Error>> {
     #[allow(deprecated)]
     match value {
-        Value::Byte(v) => { dir.write_tag(tag, *v)?; }
-        Value::Short(v) => { dir.write_tag(tag, *v)?; }
-        Value::SignedByte(v) => { dir.write_tag(tag, *v)?; }
-        Value::SignedShort(v) => { dir.write_tag(tag, *v)?; }
-        Value::Signed(v) => { dir.write_tag(tag, *v)?; }
-        Value::SignedBig(v) => { dir.write_tag(tag, *v)?; }
-        Value::Unsigned(v) => { dir.write_tag(tag, *v)?; }
-        Value::UnsignedBig(v) => { dir.write_tag(tag, *v)?; }
-        Value::Float(v) => { dir.write_tag(tag, *v)?; }
-        Value::Double(v) => { dir.write_tag(tag, *v)?; }
-        Value::Ifd(v) => { dir.write_tag(tag, *v)?; }
-        Value::IfdBig(v) => { dir.write_tag(tag, *v)?; }
-        Value::Ascii(v) => { dir.write_tag(tag, v.as_str())?; }
-        Value::Rational(n, d) => { 
-            dir.write_tag(tag, [*n, *d].as_slice())?; 
+        Value::Byte(v) => {
+            dir.write_tag(tag, *v)?;
         }
-        Value::SRational(n, d) => { 
-            dir.write_tag(tag, [*n, *d].as_slice())?; 
+        Value::Short(v) => {
+            dir.write_tag(tag, *v)?;
         }
-        Value::RationalBig(n, d) => { 
-            dir.write_tag(tag, [*n, *d].as_slice())?; 
+        Value::SignedByte(v) => {
+            dir.write_tag(tag, *v)?;
         }
-        Value::SRationalBig(n, d) => { 
-            dir.write_tag(tag, [*n, *d].as_slice())?; 
+        Value::SignedShort(v) => {
+            dir.write_tag(tag, *v)?;
+        }
+        Value::Signed(v) => {
+            dir.write_tag(tag, *v)?;
+        }
+        Value::SignedBig(v) => {
+            dir.write_tag(tag, *v)?;
+        }
+        Value::Unsigned(v) => {
+            dir.write_tag(tag, *v)?;
+        }
+        Value::UnsignedBig(v) => {
+            dir.write_tag(tag, *v)?;
+        }
+        Value::Float(v) => {
+            dir.write_tag(tag, *v)?;
+        }
+        Value::Double(v) => {
+            dir.write_tag(tag, *v)?;
+        }
+        Value::Ifd(v) => {
+            dir.write_tag(tag, *v)?;
+        }
+        Value::IfdBig(v) => {
+            dir.write_tag(tag, *v)?;
+        }
+        Value::Ascii(v) => {
+            dir.write_tag(tag, v.as_str())?;
+        }
+        Value::Rational(n, d) => {
+            dir.write_tag(tag, [*n, *d].as_slice())?;
+        }
+        Value::SRational(n, d) => {
+            dir.write_tag(tag, [*n, *d].as_slice())?;
+        }
+        Value::RationalBig(n, d) => {
+            dir.write_tag(tag, [*n, *d].as_slice())?;
+        }
+        Value::SRationalBig(n, d) => {
+            dir.write_tag(tag, [*n, *d].as_slice())?;
         }
         Value::List(values) => {
             if let Some(first) = values.first() {
                 match first {
                     Value::Byte(_) => {
-                        let bytes: Vec<u8> = values.iter().filter_map(|v| match v {
-                            Value::Byte(b) => Some(*b),
-                            _ => None,
-                        }).collect();
+                        let bytes: Vec<u8> = values
+                            .iter()
+                            .filter_map(|v| match v {
+                                Value::Byte(b) => Some(*b),
+                                _ => None,
+                            })
+                            .collect();
                         dir.write_tag(tag, bytes.as_slice())?;
                     }
                     Value::Short(_) => {
-                        let shorts: Vec<u16> = values.iter().filter_map(|v| match v {
-                            Value::Short(s) => Some(*s),
-                            _ => None,
-                        }).collect();
+                        let shorts: Vec<u16> = values
+                            .iter()
+                            .filter_map(|v| match v {
+                                Value::Short(s) => Some(*s),
+                                _ => None,
+                            })
+                            .collect();
                         dir.write_tag(tag, shorts.as_slice())?;
                     }
                     Value::Unsigned(_) => {
-                        let longs: Vec<u32> = values.iter().filter_map(|v| match v {
-                            Value::Unsigned(l) => Some(*l),
-                            _ => None,
-                        }).collect();
+                        let longs: Vec<u32> = values
+                            .iter()
+                            .filter_map(|v| match v {
+                                Value::Unsigned(l) => Some(*l),
+                                _ => None,
+                            })
+                            .collect();
                         dir.write_tag(tag, longs.as_slice())?;
                     }
                     Value::Float(_) => {
-                        let floats: Vec<f32> = values.iter().filter_map(|v| match v {
-                            Value::Float(f) => Some(*f),
-                            _ => None,
-                        }).collect();
+                        let floats: Vec<f32> = values
+                            .iter()
+                            .filter_map(|v| match v {
+                                Value::Float(f) => Some(*f),
+                                _ => None,
+                            })
+                            .collect();
                         dir.write_tag(tag, floats.as_slice())?;
                     }
                     Value::Double(_) => {
-                        let doubles: Vec<f64> = values.iter().filter_map(|v| match v {
-                            Value::Double(d) => Some(*d),
-                            _ => None,
-                        }).collect();
+                        let doubles: Vec<f64> = values
+                            .iter()
+                            .filter_map(|v| match v {
+                                Value::Double(d) => Some(*d),
+                                _ => None,
+                            })
+                            .collect();
                         dir.write_tag(tag, doubles.as_slice())?;
                     }
                     _ => {
@@ -756,7 +861,8 @@ fn print_progress(
     output_size: u64,
     _has_output_dir: bool,
 ) {
-    let filename = path.file_name()
+    let filename = path
+        .file_name()
         .map(|n| n.to_string_lossy())
         .unwrap_or_else(|| path.display().to_string().into());
 

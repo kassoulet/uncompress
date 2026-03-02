@@ -31,7 +31,7 @@ fn main() {
 
     for (name, compression, extra_opts) in compression_types {
         let output_path = fixtures_dir.join(format!("test_{}.tif", name));
-        
+
         let mut cmd = Command::new("gdal_translate");
         cmd.arg("-co")
            .arg(format!("COMPRESS={}", compression))
@@ -39,7 +39,7 @@ fn main() {
            .arg("PREDICTOR=2")  // Horizontal predictor for better compression
            .arg(&base_tiff)
            .arg(&output_path);
-        
+
         if !extra_opts.is_empty() {
             cmd.arg(extra_opts);
         }
@@ -101,7 +101,7 @@ fn create_base_tiff(path: &Path) {
 fn create_base_tiff_simple(path: &Path) {
     // Create using gdal_translate with -of MEM and then copy
     // Or use a pre-made approach with gdal's built-in test data generation
-    
+
     // Use gdal's create method via Python bindings alternative
     // For simplicity, use gdal_translate with a constant value raster
     let output = Command::new("gdal_translate")
@@ -127,10 +127,10 @@ fn create_base_tiff_simple(path: &Path) {
 fn create_with_gdal_rasterize(path: &Path) {
     // Create a simple raster using gdal_rasterize
     // First create a vector, then rasterize
-    
+
     // Simpler: use gdal's MEM driver and translate
     let mem_tiff = "/vsimem/temp_base.tif";
-    
+
     let output = Command::new("gdal_translate")
         .arg("-of")
         .arg("MEM")
@@ -158,28 +158,28 @@ fn create_with_gdal_rasterize(path: &Path) {
 fn create_minimal_tiff_manual(path: &Path) {
     // Create a minimal valid TIFF file manually for testing
     // This is a simple 2x2 RGB TIFF
-    
+
     // TIFF header (little-endian): II + 42 + IFD offset
     let mut data = Vec::new();
-    
+
     // Header
     data.extend_from_slice(&[0x49, 0x49, 0x2A, 0x00]); // Little-endian TIFF
     data.extend_from_slice(&[0x08, 0x00, 0x00, 0x00]); // IFD offset (8)
-    
+
     // IFD (12 entries for basic TIFF)
     data.extend_from_slice(&[0x0C, 0x00]); // Number of entries
-    
+
     // We'll use a simpler approach: create with Rust tiff crate
     use std::fs::File;
     use tiff::encoder::colortype::RGB8;
     use tiff::encoder::TiffEncoder;
-    
+
     let file = File::create(path).expect("Failed to create TIFF");
     let mut encoder = TiffEncoder::new(file).expect("Failed to create encoder");
     let image = encoder
         .new_image::<RGB8>(64, 64)
         .expect("Failed to create image");
-    
+
     // Create gradient pattern
     let mut img_data = Vec::with_capacity(64 * 64 * 3);
     for y in 0..64 {
@@ -189,30 +189,30 @@ fn create_minimal_tiff_manual(path: &Path) {
             img_data.push(128); // B constant
         }
     }
-    
+
     image.write_data(&img_data).expect("Failed to write data");
     println!("Created base TIFF: {:?}", path);
 }
 
 fn create_16bit_tiff(fixtures_dir: &Path) {
     let path = fixtures_dir.join("test_16bit_lzw.tif");
-    
+
     use std::fs::File;
     use tiff::encoder::colortype::Gray16;
     use tiff::encoder::TiffEncoder;
-    
+
     let file = File::create(&path).expect("Failed to create 16-bit TIFF");
     let mut encoder = TiffEncoder::new(file).expect("Failed to create encoder");
     let image = encoder
         .new_image::<Gray16>(32, 32)
         .expect("Failed to create image");
-    
+
     // Create 16-bit gradient
     let mut img_data = Vec::with_capacity(32 * 32);
     for i in 0..(32 * 32) {
         img_data.push((i * 2) as u16);
     }
-    
+
     image.write_data(&img_data).expect("Failed to write data");
     println!("Created 16-bit TIFF: {:?}", path);
 }
@@ -220,17 +220,17 @@ fn create_16bit_tiff(fixtures_dir: &Path) {
 fn create_multiband_tiff(fixtures_dir: &Path) {
     // Create a 4-band (RGBA) TIFF
     let path = fixtures_dir.join("test_rgba_lzw.tif");
-    
+
     use std::fs::File;
     use tiff::encoder::colortype::RGBA8;
     use tiff::encoder::TiffEncoder;
-    
+
     let file = File::create(&path).expect("Failed to create RGBA TIFF");
     let mut encoder = TiffEncoder::new(file).expect("Failed to create encoder");
     let image = encoder
         .new_image::<RGBA8>(32, 32)
         .expect("Failed to create image");
-    
+
     // Create RGBA data
     let mut img_data = Vec::with_capacity(32 * 32 * 4);
     for y in 0..32 {
@@ -241,7 +241,7 @@ fn create_multiband_tiff(fixtures_dir: &Path) {
             img_data.push(255); // A (opaque)
         }
     }
-    
+
     image.write_data(&img_data).expect("Failed to write data");
     println!("Created RGBA TIFF: {:?}", path);
 }
