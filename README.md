@@ -4,7 +4,7 @@
 <!-- [![Documentation](https://docs.rs/uncompress/badge.svg)](https://docs.rs/uncompress) -->
 <!-- [![License](https://img.shields.io/crates/l/uncompress)](LICENSE) -->
 [![Build Status](https://github.com/kassoulet/uncompress/workflows/CI/badge.svg)](https://github.com/kassoulet/uncompress/actions)
-[![Rust Version](https://img.shields.io/badge/rustc-1.70+-blue.svg)](https://rust-lang.org)
+[![Rust Version](https://img.shields.io/badge/rustc-1.82+-blue.svg)](https://rust-lang.org)
 
 A command-line utility to decompress files for better Git storage. Reduces file size in Git repositories by recompressing files with zero or minimal compression.
 
@@ -15,7 +15,7 @@ When storing binary files in Git repositories, compression will actually increas
 - **ZIP-based files** (`.docx`, `.xlsx`, `.pptx`, `.ipynb`, etc.): Recompresses with STORED method (no compression)
 - **GZIP files** (`.gz`): Recompresses with zero compression level
 - **PNG images**: Applies Paeth filter with no compression
-- **TIFF/GeoTIFF images**: Uncompressed with horizontal predictor, full metadata preservation
+- **TIFF/GeoTIFF images**: Uncompressed, full metadata preservation
 
 > Use `uncompress` if your compressed files may change over time (screenshots, tests data, etc.) and you want to keep your Git repository size small.
 
@@ -27,7 +27,7 @@ When storing binary files in Git repositories, compression will actually increas
 - **Skip uncompressed**: Automatically detects and skips already optimized files
 - **Magic byte detection**: Identifies file types by content, not extension
 - **BigTIFF support**: Handles both standard TIFF and BigTIFF formats
-- **Full TIFF format support**: U8, U16, F32, F64, signed/unsigned integers (via `gdal_translate`)
+- **TIFF format support**: U8, U16 (via tiff crate); F32, F64, signed/unsigned integers (via `gdal_translate`)
 - **GeoTIFF metadata preservation**: Maintains all geospatial tags and metadata
 - **Optional TIFF support**: Build without TIFF/GeoTIFF support for smaller binary
 - **No GDAL linking**: Uses `gdal_translate` CLI tool only when needed (no build dependencies)
@@ -135,7 +135,7 @@ unknown.dat | UNSUPPORTED | Skipped
 | `.zip` | ZIP archive | STORED (no compression) |
 | `.gz` | GZIP compressed | Zero compression level |
 | `.png` | PNG image | Paeth filter, no compression |
-| `.tiff`, `.tif` | TIFF/GeoTIFF image | Uncompressed + horizontal predictor |
+| `.tiff`, `.tif` | TIFF/GeoTIFF image | Uncompressed |
 
 ### TIFF/GeoTIFF Format Support
 
@@ -145,12 +145,11 @@ unknown.dat | UNSUPPORTED | Skipped
 
 **Compression Types:**
 - **Native**: Uncompressed
-- **Via GDAL**: ZSTD, WebP, JPEG, LZW, Deflate
+- **Via GDAL**: ZSTD, WebP, JPEG, LZW, Deflate → Uncompressed
 
 **Features:**
 - BigTIFF support (files > 4GB)
 - Full metadata preservation (GeoTIFF tags, georeferencing)
-- Horizontal predictor for better compression
 
 ## Use Cases
 
@@ -177,7 +176,7 @@ git commit -m "Add documents (uncompressed for better git storage)"
 
 ### Requirements
 
-- Rust 1.70 or later
+- Rust 1.82 or later
 - Cargo
 - GDAL tools (optional, for advanced TIFF/GeoTIFF support)
 
@@ -207,7 +206,7 @@ cargo fmt
 
 | Feature | Default | Description |
 |---------|---------|-------------|
-| `tiff-support` | Yes | Enable TIFF/GeoTIFF support (requires gdal crate) |
+| `tiff-support` | Yes | Enable TIFF/GeoTIFF support |
 
 ## License
 

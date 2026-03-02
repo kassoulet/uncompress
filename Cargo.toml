@@ -9,20 +9,20 @@ license = "MIT OR Apache-2.0"
 readme = "README.md"
 keywords = ["compression", "git", "zip", "png", "tiff", "geotiff", "optimization"]
 categories = ["compression", "command-line-utilities"]
-rust-version = "1.70"
+rust-version = "1.82"
 
 [features]
 default = ["tiff-support"]
-tiff-support = ["dep:tiff", "tiff/zstd", "tiff/webp", "tiff/jpeg", "tiff/lzw", "tiff/deflate", "tiff/fax"]
+tiff-support = ["dep:tiff"]
 tiff-minimal = ["dep:tiff"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 flate2 = "1.0"
 png = "0.18"
-zip = "8.1.0"
+zip = { version = "1.1", default-features = false, features = ["deflate"] }
 walkdir = "2"
-tiff = { version = "0.11", optional = true, default-features = false }
+tiff = { version = "0.9", optional = true }
 
 [dev-dependencies]
 tempfile = "3"

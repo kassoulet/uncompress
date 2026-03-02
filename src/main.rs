@@ -13,16 +13,10 @@ use zip::ZipWriter;
 use std::process::Command;
 
 #[cfg(feature = "tiff-support")]
-use tiff::decoder::ifd::Value;
-
-#[cfg(feature = "tiff-support")]
 use tiff::encoder::colortype;
 
 #[cfg(feature = "tiff-support")]
-use tiff::encoder::{Compression as TiffCompression, Predictor, TiffEncoder, TiffKindStandard};
-
-#[cfg(feature = "tiff-support")]
-use tiff::tags::Tag;
+use tiff::encoder::TiffEncoder;
 
 /// Magic bytes for ZIP files (PK\x03\x04)
 const ZIP_MAGIC: &[u8] = &[0x50, 0x4B, 0x03, 0x04];
@@ -336,15 +330,15 @@ fn process_zip_based(
         let mut entry = archive.by_index(i)?;
         let outpath = entry.name().to_string();
 
-        let options: FileOptions<'_, ()> = FileOptions::default()
+        let options: FileOptions<()> = FileOptions::default()
             .compression_method(zip::CompressionMethod::Stored)
-            .last_modified_time(entry.last_modified().unwrap_or_default())
+            .last_modified_time(entry.last_modified())
             .unix_permissions(entry.unix_mode().unwrap_or(0o644));
 
         if entry.is_dir() {
-            zip_writer.add_directory(&outpath, options)?;
+            zip_writer.add_directory(outpath.clone(), options)?;
         } else {
-            zip_writer.start_file(&outpath, options)?;
+            zip_writer.start_file(outpath.clone(), options)?;
             std::io::copy(&mut entry, &mut zip_writer)?;
         }
     }
@@ -460,36 +454,6 @@ fn process_tiff(
         .get_tag(tiff::tags::Tag::PhotometricInterpretation)?
         .into_u16()?;
 
-    // Read all tags from the input file for preservation (including GeoTIFF tags)
-    let mut preserved_tags: Vec<(Tag, Value)> = Vec::new();
-
-    // Use tag_iter to read all tags from the current IFD
-    for result in decoder.tag_iter() {
-        if let Ok((tag, value)) = result {
-            // Skip tags that will be rewritten by the encoder
-            if matches!(
-                tag,
-                Tag::StripOffsets
-                    | Tag::StripByteCounts
-                    | Tag::TileOffsets
-                    | Tag::TileByteCounts
-                    | Tag::JPEGTables
-                    | Tag::Compression
-                    | Tag::Predictor
-                    | Tag::ImageWidth
-                    | Tag::ImageLength
-                    | Tag::BitsPerSample
-                    | Tag::PhotometricInterpretation
-                    | Tag::SamplesPerPixel
-                    | Tag::RowsPerStrip
-                    | Tag::PlanarConfiguration
-            ) {
-                continue;
-            }
-            preserved_tags.push((tag, value));
-        }
-    }
-
     // Read the image data - this may fail for unsupported compression like zstd
     let image = match decoder.read_image() {
         Ok(img) => img,
@@ -499,13 +463,13 @@ fn process_tiff(
     };
 
     // Create output TIFF with no compression and predictor
-    let mut encoder = TiffEncoder::new(File::create(output_path)?)?
-        .with_compression(TiffCompression::Uncompressed)
-        .with_predictor(Predictor::Horizontal);
+    // In tiff 0.9, we use new_image_with_compression directly
+    let output_file = File::create(output_path)?;
+    let mut encoder = TiffEncoder::new(output_file)?;
 
     // Write the image data based on the decoded type and preserve tags
     // Note: tiff encoder only supports U8 and U16 natively
-    // Other types (U32, U64, I8, I16, I32, I64, F32, F64, F16) use gdal fallback
+    // Other types (U32, U64, I8, I16, I32, I64, F32, F64) use gdal fallback
     match image {
         tiff::decoder::DecodingResult::U8(data) => {
             // Determine color type based on photometric interpretation and samples
@@ -514,19 +478,16 @@ fn process_tiff(
                 .into_u16()?;
 
             if samples == 1 {
-                // Grayscale
-                let mut image_encoder = encoder.new_image::<colortype::Gray8>(width, height)?;
-                write_preserved_tags(&mut image_encoder, &preserved_tags)?;
+                // Grayscale - uncompressed
+                let image_encoder = encoder.new_image_with_compression::<colortype::Gray8, tiff::encoder::compression::Uncompressed>(width, height, tiff::encoder::compression::Uncompressed)?;
                 image_encoder.write_data(&data)?;
             } else if samples == 3 {
                 // RGB
-                let mut image_encoder = encoder.new_image::<colortype::RGB8>(width, height)?;
-                write_preserved_tags(&mut image_encoder, &preserved_tags)?;
+                let image_encoder = encoder.new_image_with_compression::<colortype::RGB8, tiff::encoder::compression::Uncompressed>(width, height, tiff::encoder::compression::Uncompressed)?;
                 image_encoder.write_data(&data)?;
             } else if samples == 4 {
                 // RGBA
-                let mut image_encoder = encoder.new_image::<colortype::RGBA8>(width, height)?;
-                write_preserved_tags(&mut image_encoder, &preserved_tags)?;
+                let image_encoder = encoder.new_image_with_compression::<colortype::RGBA8, tiff::encoder::compression::Uncompressed>(width, height, tiff::encoder::compression::Uncompressed)?;
                 image_encoder.write_data(&data)?;
             } else {
                 return process_tiff_with_gdal(
@@ -544,16 +505,13 @@ fn process_tiff(
                 .into_u16()?;
 
             if samples == 1 {
-                let mut image_encoder = encoder.new_image::<colortype::Gray16>(width, height)?;
-                write_preserved_tags(&mut image_encoder, &preserved_tags)?;
+                let image_encoder = encoder.new_image_with_compression::<colortype::Gray16, tiff::encoder::compression::Uncompressed>(width, height, tiff::encoder::compression::Uncompressed)?;
                 image_encoder.write_data(&data)?;
             } else if samples == 3 {
-                let mut image_encoder = encoder.new_image::<colortype::RGB16>(width, height)?;
-                write_preserved_tags(&mut image_encoder, &preserved_tags)?;
+                let image_encoder = encoder.new_image_with_compression::<colortype::RGB16, tiff::encoder::compression::Uncompressed>(width, height, tiff::encoder::compression::Uncompressed)?;
                 image_encoder.write_data(&data)?;
             } else if samples == 4 {
-                let mut image_encoder = encoder.new_image::<colortype::RGBA16>(width, height)?;
-                write_preserved_tags(&mut image_encoder, &preserved_tags)?;
+                let image_encoder = encoder.new_image_with_compression::<colortype::RGBA16, tiff::encoder::compression::Uncompressed>(width, height, tiff::encoder::compression::Uncompressed)?;
                 image_encoder.write_data(&data)?;
             } else {
                 return process_tiff_with_gdal(
@@ -629,21 +587,12 @@ fn process_tiff(
                 "64-bit float TIFF requires gdal".to_string(),
             );
         }
-        #[cfg(feature = "tiff-support")]
-        tiff::decoder::DecodingResult::F16(_) => {
-            return process_tiff_with_gdal(
-                path,
-                output_path,
-                verbose,
-                "16-bit float TIFF requires gdal".to_string(),
-            );
-        }
     }
 
     if verbose {
         println!(
-            "TIFF: {}x{}, photometric={}, {} tags preserved, uncompressed with horizontal predictor",
-            width, height, photometric_interpretation, preserved_tags.len()
+            "TIFF: {}x{}, photometric={}, uncompressed",
+            width, height, photometric_interpretation
         );
     }
 
@@ -692,145 +641,6 @@ fn process_tiff_with_gdal(
         println!("TIFF: processed with gdal_translate (zstd or unsupported compression)");
     }
 
-    Ok(())
-}
-
-#[cfg(feature = "tiff-support")]
-/// Write preserved tags to the image encoder
-fn write_preserved_tags<C: colortype::ColorType>(
-    image_encoder: &mut tiff::encoder::ImageEncoder<'_, File, C, TiffKindStandard>,
-    preserved_tags: &[(Tag, Value)],
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mut dir = image_encoder.encoder();
-    for (tag, value) in preserved_tags {
-        write_tag_value(&mut dir, *tag, value)?;
-    }
-    Ok(())
-}
-
-#[cfg(feature = "tiff-support")]
-/// Write a single tag value to the directory encoder
-fn write_tag_value(
-    dir: &mut tiff::encoder::DirectoryEncoder<'_, File, TiffKindStandard>,
-    tag: Tag,
-    value: &Value,
-) -> Result<(), Box<dyn std::error::Error>> {
-    #[allow(deprecated)]
-    match value {
-        Value::Byte(v) => {
-            dir.write_tag(tag, *v)?;
-        }
-        Value::Short(v) => {
-            dir.write_tag(tag, *v)?;
-        }
-        Value::SignedByte(v) => {
-            dir.write_tag(tag, *v)?;
-        }
-        Value::SignedShort(v) => {
-            dir.write_tag(tag, *v)?;
-        }
-        Value::Signed(v) => {
-            dir.write_tag(tag, *v)?;
-        }
-        Value::SignedBig(v) => {
-            dir.write_tag(tag, *v)?;
-        }
-        Value::Unsigned(v) => {
-            dir.write_tag(tag, *v)?;
-        }
-        Value::UnsignedBig(v) => {
-            dir.write_tag(tag, *v)?;
-        }
-        Value::Float(v) => {
-            dir.write_tag(tag, *v)?;
-        }
-        Value::Double(v) => {
-            dir.write_tag(tag, *v)?;
-        }
-        Value::Ifd(v) => {
-            dir.write_tag(tag, *v)?;
-        }
-        Value::IfdBig(v) => {
-            dir.write_tag(tag, *v)?;
-        }
-        Value::Ascii(v) => {
-            dir.write_tag(tag, v.as_str())?;
-        }
-        Value::Rational(n, d) => {
-            dir.write_tag(tag, [*n, *d].as_slice())?;
-        }
-        Value::SRational(n, d) => {
-            dir.write_tag(tag, [*n, *d].as_slice())?;
-        }
-        Value::RationalBig(n, d) => {
-            dir.write_tag(tag, [*n, *d].as_slice())?;
-        }
-        Value::SRationalBig(n, d) => {
-            dir.write_tag(tag, [*n, *d].as_slice())?;
-        }
-        Value::List(values) => {
-            if let Some(first) = values.first() {
-                match first {
-                    Value::Byte(_) => {
-                        let bytes: Vec<u8> = values
-                            .iter()
-                            .filter_map(|v| match v {
-                                Value::Byte(b) => Some(*b),
-                                _ => None,
-                            })
-                            .collect();
-                        dir.write_tag(tag, bytes.as_slice())?;
-                    }
-                    Value::Short(_) => {
-                        let shorts: Vec<u16> = values
-                            .iter()
-                            .filter_map(|v| match v {
-                                Value::Short(s) => Some(*s),
-                                _ => None,
-                            })
-                            .collect();
-                        dir.write_tag(tag, shorts.as_slice())?;
-                    }
-                    Value::Unsigned(_) => {
-                        let longs: Vec<u32> = values
-                            .iter()
-                            .filter_map(|v| match v {
-                                Value::Unsigned(l) => Some(*l),
-                                _ => None,
-                            })
-                            .collect();
-                        dir.write_tag(tag, longs.as_slice())?;
-                    }
-                    Value::Float(_) => {
-                        let floats: Vec<f32> = values
-                            .iter()
-                            .filter_map(|v| match v {
-                                Value::Float(f) => Some(*f),
-                                _ => None,
-                            })
-                            .collect();
-                        dir.write_tag(tag, floats.as_slice())?;
-                    }
-                    Value::Double(_) => {
-                        let doubles: Vec<f64> = values
-                            .iter()
-                            .filter_map(|v| match v {
-                                Value::Double(d) => Some(*d),
-                                _ => None,
-                            })
-                            .collect();
-                        dir.write_tag(tag, doubles.as_slice())?;
-                    }
-                    _ => {
-                        eprintln!("Warning: Unsupported list value type for tag {:?}", tag);
-                    }
-                }
-            }
-        }
-        _ => {
-            eprintln!("Warning: Unsupported tag value type for tag {:?}", tag);
-        }
-    }
     Ok(())
 }
 
