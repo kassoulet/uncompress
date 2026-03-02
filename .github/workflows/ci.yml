@@ -53,8 +53,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust 1.70
-        uses: dtolnay/rust-toolchain@1.70
+      - name: Install Rust 1.82
+        uses: dtolnay/rust-toolchain@1.82
 
       - name: Check build on MSRV
         run: cargo check --verbose
