@@ -271,7 +271,16 @@ fn process_file(
 
     // 🛡️ SECURITY: Use NamedTempFile for secure, unique temporary files
     // This prevents symlink attacks and ensured atomic replacement
-    let temp_file = Builder::new().prefix(".unc.").tempfile_in(parent)?;
+    // We use the original extension to help external tools like gdal identify the format
+    let suffix = output_path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| format!(".{}", ext))
+        .unwrap_or_default();
+    let temp_file = Builder::new()
+        .prefix(".unc.")
+        .suffix(&suffix)
+        .tempfile_in(parent)?;
     let temp_path = temp_file.path().to_path_buf();
 
     let result = match file_type {
