@@ -23,7 +23,7 @@ png = "0.18"
 zip = { version = "1.1", default-features = false, features = ["deflate"] }
 walkdir = "2"
 tiff = { version = "0.9", optional = true }
-tempfile = "3"
+tempfile = "3.12"
 
 [dev-dependencies]
 assert_cmd = "2"

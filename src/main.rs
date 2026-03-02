@@ -261,6 +261,7 @@ fn process_file(
     }
 
     // Get input file metadata and permissions before processing
+    // 🛡️ SECURITY: Capture original permissions to preserve them
     let metadata = fs::metadata(path)?;
     let input_size = metadata.len();
     let permissions = metadata.permissions();
@@ -268,7 +269,8 @@ fn process_file(
     let output_path = determine_output_path(path, output_dir)?;
     let parent = output_path.parent().unwrap_or_else(|| Path::new("."));
 
-    // Create a secure temporary file in the same directory as the output
+    // 🛡️ SECURITY: Use NamedTempFile for secure, unique temporary files
+    // This prevents symlink attacks and ensured atomic replacement
     let temp_file = Builder::new().prefix(".unc.").tempfile_in(parent)?;
     let temp_path = temp_file.path().to_path_buf();
 
@@ -280,17 +282,15 @@ fn process_file(
         FileType::Tiff => process_tiff(path, &temp_path, verbose),
     };
 
-    if let Err(e) = result {
-        return Err(e);
-    }
+    result?;
 
-    // Apply original permissions to the temporary file
+    // 🛡️ SECURITY: Reapply original permissions to the new file
     temp_file.as_file().set_permissions(permissions)?;
 
     // Get output file size after processing
     let output_size = fs::metadata(&temp_path)?.len();
 
-    // Atomically move the temporary file to its final destination
+    // 🛡️ SECURITY: Atomically move the temporary file to its final destination
     temp_file.persist(&output_path)?;
 
     if verbose {
