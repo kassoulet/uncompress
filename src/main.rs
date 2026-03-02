@@ -439,13 +439,8 @@ fn process_tiff(
 
     // Get image information - this may also fail for unsupported compression
     let dimensions_result = decoder.dimensions();
-    if dimensions_result.is_err() {
-        return process_tiff_with_gdal(
-            path,
-            output_path,
-            verbose,
-            dimensions_result.unwrap_err().to_string(),
-        );
+    if let Err(e) = dimensions_result {
+        return process_tiff_with_gdal(path, output_path, verbose, e.to_string());
     }
 
     let width = decoder.dimensions()?.0;
@@ -762,7 +757,7 @@ mod tests {
 
             let file = File::create(&zip_path).unwrap();
             let mut zip = ZipWriter::new(file);
-            let options: FileOptions<'_, ()> =
+            let options: FileOptions<()> =
                 FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
             zip.start_file("test.txt", options).unwrap();
             zip.write_all(b"Test").unwrap();
@@ -786,7 +781,7 @@ mod tests {
 
             let file = File::create(&zip_path).unwrap();
             let mut zip = ZipWriter::new(file);
-            let options: FileOptions<'_, ()> =
+            let options: FileOptions<()> =
                 FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
             zip.start_file("test.txt", options).unwrap();
             zip.write_all(b"Test").unwrap();
@@ -920,7 +915,7 @@ mod tests {
 
             let file = File::create(&input_path).unwrap();
             let mut zip = ZipWriter::new(file);
-            let options: FileOptions<'_, ()> =
+            let options: FileOptions<()> =
                 FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
             zip.start_file("content.txt", options).unwrap();

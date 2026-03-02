@@ -49,7 +49,7 @@ fn generate_test_zip(path: PathBuf) {
 
     let file = File::create(&path).expect("Failed to create ZIP file");
     let mut zip = ZipWriter::new(file);
-    let options: FileOptions<'_, ()> =
+    let options: FileOptions<()> =
         FileOptions::default().compression_method(CompressionMethod::Deflated);
 
     // Add multiple files to the ZIP

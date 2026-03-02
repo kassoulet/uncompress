@@ -1,5 +1,7 @@
 //! Integration tests for uncompress CLI using real fixture files
 
+#![allow(deprecated)]
+
 use predicates::prelude::*;
 use std::path::PathBuf;
 use tempfile::TempDir;
