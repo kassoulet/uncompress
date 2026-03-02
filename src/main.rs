@@ -5,6 +5,7 @@ use png::{Encoder, Filter};
 use std::fs::{self, File};
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
+use tempfile::Builder;
 use walkdir::WalkDir;
 use zip::write::FileOptions;
 use zip::ZipWriter;
@@ -259,44 +260,45 @@ fn process_file(
         return Ok(());
     }
 
-    // Get input file size before processing
-    let input_size = fs::metadata(path)?.len();
+    // Get input file metadata and permissions before processing
+    let metadata = fs::metadata(path)?;
+    let input_size = metadata.len();
+    let permissions = metadata.permissions();
 
     let output_path = determine_output_path(path, output_dir)?;
+    let parent = output_path.parent().unwrap_or_else(|| Path::new("."));
+
+    // Create a secure temporary file in the same directory as the output
+    let temp_file = Builder::new().prefix(".unc.").tempfile_in(parent)?;
+    let temp_path = temp_file.path().to_path_buf();
 
     let result = match file_type {
-        FileType::Png => process_png(path, &output_path, verbose),
-        FileType::Gz => process_gz(path, &output_path, verbose),
-        FileType::Zip => process_zip_based(path, &output_path, verbose),
+        FileType::Png => process_png(path, &temp_path, verbose),
+        FileType::Gz => process_gz(path, &temp_path, verbose),
+        FileType::Zip => process_zip_based(path, &temp_path, verbose),
         #[cfg(feature = "tiff-support")]
-        FileType::Tiff => process_tiff(path, &output_path, verbose),
+        FileType::Tiff => process_tiff(path, &temp_path, verbose),
     };
 
     if let Err(e) = result {
-        // Clean up partial output file if it exists
-        if output_path.exists() {
-            let _ = fs::remove_file(&output_path);
-        }
         return Err(e);
     }
 
-    // Get output file size after processing
-    let output_size = fs::metadata(&output_path)?.len();
+    // Apply original permissions to the temporary file
+    temp_file.as_file().set_permissions(permissions)?;
 
-    // If processing in-place (no output dir), rename temp file to original
-    if output_dir.is_none() && output_path != path {
-        if let Err(e) = fs::rename(&output_path, path) {
-            // Cleanup temp file on rename failure
-            if output_path.exists() {
-                let _ = fs::remove_file(&output_path);
-            }
-            return Err(e.into());
-        }
-        if verbose {
+    // Get output file size after processing
+    let output_size = fs::metadata(&temp_path)?.len();
+
+    // Atomically move the temporary file to its final destination
+    temp_file.persist(&output_path)?;
+
+    if verbose {
+        if output_dir.is_none() {
             println!("Processed: {}", path.display());
+        } else {
+            println!("Processed: {} -> {}", path.display(), output_path.display());
         }
-    } else if verbose {
-        println!("Processed: {} -> {}", path.display(), output_path.display());
     }
 
     // Print progress information
@@ -648,12 +650,8 @@ fn determine_output_path(
         fs::create_dir_all(dir)?;
         Ok(dir.join(input_path.file_name().ok_or("Invalid filename")?))
     } else {
-        // Overwrite in place - create temp file with .unc. prefix
-        // e.g., file.zip -> .unc.file.zip
-        let file_name = input_path.file_name().ok_or("Invalid filename")?;
-        let parent = input_path.parent().unwrap_or(Path::new(""));
-        let temp_name = format!(".unc.{}", file_name.to_string_lossy());
-        Ok(parent.join(temp_name))
+        // Overwrite in place
+        Ok(input_path.to_path_buf())
     }
 }
 
@@ -742,7 +740,7 @@ mod tests {
         let output_dir: Option<&PathBuf> = None;
 
         let result = determine_output_path(&input_path, output_dir).unwrap();
-        assert_eq!(result, PathBuf::from("/some/path/.unc.test.zip"));
+        assert_eq!(result, input_path);
     }
 
     #[test]
