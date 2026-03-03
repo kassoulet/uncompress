@@ -3,7 +3,7 @@ use flate2::write::GzEncoder;
 use flate2::Compression;
 use png::{Encoder, Filter};
 use std::fs::{self, File};
-use std::io::{BufReader, Read};
+use std::io::{BufReader, BufWriter, Read};
 use std::path::{Path, PathBuf};
 use tempfile::Builder;
 use walkdir::WalkDir;
@@ -334,8 +334,9 @@ fn process_zip_based(
     let input_file = File::open(path)?;
     let mut archive = zip::ZipArchive::new(input_file)?;
 
+    // ⚡ BOLT OPTIMIZATION: Use BufWriter to reduce syscalls when writing many small ZIP entries
     let output_file = File::create(output_path)?;
-    let mut zip_writer = ZipWriter::new(output_file);
+    let mut zip_writer = ZipWriter::new(BufWriter::new(output_file));
 
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i)?;
@@ -371,8 +372,9 @@ fn process_gz(
     let input_file = File::open(path)?;
     let decoder = flate2::read::GzDecoder::new(input_file);
 
+    // ⚡ BOLT OPTIMIZATION: Use BufWriter to reduce syscalls when writing GZ data
     let output_file = File::create(output_path)?;
-    let mut encoder = GzEncoder::new(output_file, Compression::none());
+    let mut encoder = GzEncoder::new(BufWriter::new(output_file), Compression::none());
 
     std::io::copy(&mut decoder.take(u64::MAX), &mut encoder)?;
     encoder.finish()?;
@@ -406,8 +408,9 @@ fn process_png(
     let data = &buf[..actual_data_size.min(buf.len())];
 
     // Create output PNG with Paeth filter and no compression
+    // ⚡ BOLT OPTIMIZATION: Use BufWriter to reduce syscalls when writing PNG data
     let output_file = File::create(output_path)?;
-    let mut encoder = Encoder::new(output_file, info.width, info.height);
+    let mut encoder = Encoder::new(BufWriter::new(output_file), info.width, info.height);
     encoder.set_color(info.color_type);
     encoder.set_depth(info.bit_depth);
     encoder.set_filter(Filter::Paeth);
@@ -470,8 +473,9 @@ fn process_tiff(
 
     // Create output TIFF with no compression and predictor
     // In tiff 0.9, we use new_image_with_compression directly
+    // ⚡ BOLT OPTIMIZATION: Use BufWriter to reduce syscalls when writing TIFF data
     let output_file = File::create(output_path)?;
-    let mut encoder = TiffEncoder::new(output_file)?;
+    let mut encoder = TiffEncoder::new(BufWriter::new(output_file))?;
 
     // Write the image data based on the decoded type and preserve tags
     // Note: tiff encoder only supports U8 and U16 natively
